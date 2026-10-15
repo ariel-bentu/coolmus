@@ -1,0 +1,13 @@
+[package]
+name = "sketch-store"
+description = "Local on-disk persistence for the Sketcher library (works fully offline)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sketch-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+directories = "6"

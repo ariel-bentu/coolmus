@@ -1,0 +1,16 @@
+[package]
+name = "onenote"
+description = "Microsoft OneNote (Graph API) integration for Sketcher: auth, browse, import/export pages and ink."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sketch-core.workspace = true
+sketch-render.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+log.workspace = true
+ureq = { version = "3", features = ["json"] }
+quick-xml = "0.42"

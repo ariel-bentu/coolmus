@@ -1,0 +1,10 @@
+[package]
+name = "sketch-render"
+description = "Turns Sketcher strokes into triangle meshes (for any GPU UI) and PNG images."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sketch-core.workspace = true
+tiny-skia = "0.12"
