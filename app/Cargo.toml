@@ -1,6 +1,6 @@
 [package]
 name = "sketcher"
-description = "Fast pen sketching app with notebooks, tags and OneNote sync."
+description = "Fast pen sketching app: pages as files in folders, tags, OneNote import."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -9,17 +9,19 @@ license.workspace = true
 name = "sketcher"
 path = "src/main.rs"
 
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
 [dependencies]
 sketch-core.workspace = true
-sketch-render.workspace = true
 sketch-store.workspace = true
 onenote.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "wgpu", "accesskit"] }
-egui = "0.36"
+tauri = { version = "2", features = [] }
 env_logger = "0.11"
 directories = "6"
 rfd = "0.17"
 open = "5"
+base64 = "0.22"

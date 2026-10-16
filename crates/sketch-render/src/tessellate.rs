@@ -204,10 +204,12 @@ pub fn outlines(stroke: &Stroke) -> Vec<Vec<[f32; 2]>> {
         .iter()
         .map(|piece| {
             let n = piece.pts.len();
+            // Half circle sweeping clockwise (decreasing angle) from `a0`, which
+            // keeps caps on the outside when walking the outline left-side first.
             let arc = |out: &mut Vec<[f32; 2]>, c: [f32; 2], r: f32, a0: f32| {
                 let segs = circle_segments(r) / 2 + 1;
                 for k in 0..=segs {
-                    let a = a0 + PI * k as f32 / segs as f32;
+                    let a = a0 - PI * k as f32 / segs as f32;
                     out.push([c[0] + r * a.cos(), c[1] + r * a.sin()]);
                 }
             };

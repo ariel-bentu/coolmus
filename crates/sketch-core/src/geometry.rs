@@ -27,9 +27,12 @@ impl From<[f32; 3]> for Point {
     }
 }
 
+/// Positions are stored to 1/100 px and pressure to 1/1000, which is far below
+/// what a pen can resolve and keeps page files about half the size.
 impl From<Point> for [f32; 3] {
     fn from(p: Point) -> Self {
-        [p.x, p.y, p.pressure]
+        let round = |v: f32, k: f32| (v * k).round() / k;
+        [round(p.x, 100.0), round(p.y, 100.0), round(p.pressure, 1000.0)]
     }
 }
 

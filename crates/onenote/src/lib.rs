@@ -29,6 +29,10 @@ pub enum Error {
     Auth(String),
     #[error("not signed in")]
     NotSignedIn,
+    /// OneNote storage doesn't exist yet for this account (never used OneNote).
+    /// The text is a UI translation key.
+    #[error("oneNoteNotProvisioned")]
+    NotProvisioned,
     #[error("could not parse OneNote data: {0}")]
     Parse(String),
     #[error("render error: {0}")]

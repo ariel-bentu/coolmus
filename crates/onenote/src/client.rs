@@ -16,20 +16,23 @@ const GRAPH_V1: &str = "https://graph.microsoft.com/v1.0/me/onenote";
 const GRAPH_BETA: &str = "https://graph.microsoft.com/beta/me/onenote";
 const MAX_BODY: u64 = 200 * 1024 * 1024;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteSection {
     pub id: String,
     pub name: String,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoteNotebook {
     pub id: String,
     pub name: String,
     pub sections: Vec<RemoteSection>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemotePage {
     pub id: String,
     pub title: String,
@@ -48,6 +51,19 @@ pub struct OneNoteClient {
     cfg: AuthConfig,
     tokens: Option<Tokens>,
     cache: Option<PathBuf>,
+}
+
+fn is_transient(status: u16) -> bool {
+    matches!(status, 429 | 500 | 502 | 503 | 504)
+}
+
+/// OneNote error 20280 on the notebook list means the account has no OneNote
+/// storage yet (it has never opened OneNote).
+fn not_provisioned(e: Error) -> Error {
+    match e {
+        Error::Status { status: 500, ref body } if body.contains("\"20280\"") => Error::NotProvisioned,
+        e => e,
+    }
 }
 
 fn str_field(v: &Value, k: &str) -> String {
@@ -153,11 +169,22 @@ impl OneNoteClient {
         Err(Error::Status { status, body: body.chars().take(600).collect() })
     }
 
+    /// GET with up to three retries on throttling and transient server errors.
     fn get_json(&mut self, url: &str) -> Result<Value> {
-        let auth = self.bearer()?;
-        let mut resp = self.agent.get(url).header("Authorization", &auth).call()?;
-        Self::check(&mut resp)?;
-        resp.body_mut().read_json::<Value>().map_err(|e| Error::Parse(e.to_string()))
+        let mut attempt = 0;
+        loop {
+            let auth = self.bearer()?;
+            let mut resp = self.agent.get(url).header("Authorization", &auth).call()?;
+            match Self::check(&mut resp) {
+                Ok(()) => return resp.body_mut().read_json::<Value>().map_err(|e| Error::Parse(e.to_string())),
+                Err(Error::Status { status, body }) if is_transient(status) && attempt < 3 => {
+                    attempt += 1;
+                    log::warn!("Graph returned {status}, retrying ({attempt}/3): {body}");
+                    std::thread::sleep(Duration::from_millis(800 * (1 << attempt)));
+                }
+                Err(e) => return Err(e),
+            }
+        }
     }
 
     /// GETs a collection, following `@odata.nextLink`.
@@ -181,7 +208,8 @@ impl OneNoteClient {
             "{GRAPH_V1}/notebooks?$select=id,displayName&$expand=sections($select=id,displayName),sectionGroups($expand=sections($select=id,displayName))"
         );
         Ok(self
-            .get_all(&url)?
+            .get_all(&url)
+            .map_err(not_provisioned)?
             .iter()
             .map(|nb| {
                 let mut sections: Vec<RemoteSection> =

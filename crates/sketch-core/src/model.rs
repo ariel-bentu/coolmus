@@ -189,25 +189,89 @@ pub struct OneNotePageLink {
     pub owned_by_sketcher: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OneNoteSectionLink {
-    pub notebook_id: String,
-    pub section_id: String,
+/// Identifies a page file and its layout version.
+pub const PAGE_FORMAT: &str = "sketcher/page";
+pub const PAGE_VERSION: u32 = 2;
+
+fn page_format() -> String {
+    PAGE_FORMAT.to_string()
 }
 
-/// A single sheet of paper with ink on it.
+fn page_version() -> u32 {
+    PAGE_VERSION
+}
+
+/// A text box placed anywhere on the page. `(x, y)` is its top-left corner;
+/// text wraps at `width`. The text's own direction (Hebrew or English) decides
+/// its alignment inside the box.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TextBox {
+    pub id: Id,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub text: String,
+    /// Font size in page units.
+    pub size: f32,
+    pub color: Color,
+}
+
+impl TextBox {
+    /// Approximate bounds (the exact height depends on the font's line wrapping).
+    pub fn bounds(&self) -> Rect {
+        let lines = self.text.lines().count().max(1) as f32;
+        Rect { min_x: self.x, min_y: self.y, max_x: self.x + self.width, max_y: self.y + lines * self.size * 1.3 }
+    }
+}
+
+/// A picture placed on the page, stored inside the page file as a data URL
+/// (`data:image/jpeg;base64,…`) so a page is always one self-contained file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageItem {
+    pub id: Id,
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub src: String,
+}
+
+impl ImageItem {
+    pub fn bounds(&self) -> Rect {
+        Rect { min_x: self.x, min_y: self.y, max_x: self.x + self.width, max_y: self.y + self.height }
+    }
+}
+
+/// A single sheet of paper: vector ink, text boxes and pictures.
+///
+/// Stored as one JSON file. The page's name is its file name, so `title` is
+/// filled in when the file is loaded and never written into the file.
+/// Drawing order: pictures, then highlighter ink, then ink, then text.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Page {
+    #[serde(default = "page_format")]
+    pub format: String,
+    #[serde(default = "page_version")]
+    pub version: u32,
     pub id: Id,
+    #[serde(skip)]
     pub title: String,
+    #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
     pub paper: Paper,
     pub width: f32,
     pub height: f32,
+    #[serde(default)]
     pub strokes: Vec<Stroke>,
+    #[serde(default)]
+    pub texts: Vec<TextBox>,
+    #[serde(default)]
+    pub images: Vec<ImageItem>,
     pub created: u64,
     pub modified: u64,
-    #[serde(default)]
+    /// The OneNote page this page was imported from, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub onenote: Option<OneNotePageLink>,
 }
 
@@ -218,6 +282,8 @@ impl Page {
     pub fn new(title: impl Into<String>) -> Self {
         let now = now_millis();
         Self {
+            format: page_format(),
+            version: PAGE_VERSION,
             id: new_id(),
             title: title.into(),
             tags: Vec::new(),
@@ -225,6 +291,8 @@ impl Page {
             width: DEFAULT_PAGE_SIZE.0,
             height: DEFAULT_PAGE_SIZE.1,
             strokes: Vec::new(),
+            texts: Vec::new(),
+            images: Vec::new(),
             created: now,
             modified: now,
             onenote: None,
@@ -235,25 +303,52 @@ impl Page {
         self.modified = now_millis();
     }
 
-    pub fn meta(&self) -> PageMeta {
-        PageMeta {
-            id: self.id,
-            title: self.title.clone(),
-            tags: self.tags.clone(),
-            created: self.created,
-            modified: self.modified,
-            onenote_page: self.onenote.as_ref().map(|l| l.page_id.clone()),
-        }
-    }
-
     /// Bounds of all ink (empty rect if none).
     pub fn ink_bounds(&self) -> Rect {
         self.strokes.iter().fold(Rect::EMPTY, |acc, s| acc.union(&s.bounds()))
     }
 
-    /// Grows the page so all ink fits, keeping a margin.
+    /// Bounds of everything on the page: ink, text and pictures.
+    pub fn content_bounds(&self) -> Rect {
+        let texts = self.texts.iter().map(TextBox::bounds);
+        let images = self.images.iter().map(ImageItem::bounds);
+        texts.chain(images).fold(self.ink_bounds(), |acc, r| acc.union(&r))
+    }
+
+    /// Moves content that lies above or left of the page (negative coordinates)
+    /// onto it, keeping its layout, then grows the page to fit. OneNote stores
+    /// right-to-left pages' ink at negative X. Returns true if anything moved.
+    pub fn move_ink_onto_page(&mut self) -> bool {
+        const MARGIN: f32 = 40.0;
+        let points = self.strokes.iter().flat_map(|s| &s.points).map(|p| (p.x, p.y));
+        let corners = self.texts.iter().map(|t| (t.x, t.y)).chain(self.images.iter().map(|i| (i.x, i.y)));
+        let (min_x, min_y) = points.chain(corners).fold((0.0f32, 0.0f32), |(x, y), (px, py)| (x.min(px), y.min(py)));
+        let dx = if min_x < 0.0 { MARGIN - min_x } else { 0.0 };
+        let dy = if min_y < 0.0 { MARGIN - min_y } else { 0.0 };
+        if dx == 0.0 && dy == 0.0 {
+            return false;
+        }
+        for s in &mut self.strokes {
+            for p in &mut s.points {
+                p.x += dx;
+                p.y += dy;
+            }
+        }
+        for t in &mut self.texts {
+            t.x += dx;
+            t.y += dy;
+        }
+        for i in &mut self.images {
+            i.x += dx;
+            i.y += dy;
+        }
+        self.fit_to_ink();
+        true
+    }
+
+    /// Grows the page so all content fits, keeping a margin.
     pub fn fit_to_ink(&mut self) {
-        let b = self.ink_bounds();
+        let b = self.content_bounds();
         if !b.is_empty() {
             self.width = self.width.max(b.max_x + 40.0);
             self.height = self.height.max(b.max_y + 40.0);
@@ -271,144 +366,24 @@ impl Page {
     }
 }
 
-/// Lightweight page summary kept in the library index (used for listing and search).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PageMeta {
-    pub id: Id,
-    pub title: String,
-    pub tags: Vec<String>,
-    pub created: u64,
-    pub modified: u64,
-    /// OneNote page this page is linked to, if any.
-    #[serde(default)]
-    pub onenote_page: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Section {
-    pub id: Id,
-    pub name: String,
-    pub pages: Vec<PageMeta>,
-    #[serde(default)]
-    pub onenote: Option<OneNoteSectionLink>,
-}
-
-impl Section {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self { id: new_id(), name: name.into(), pages: Vec::new(), onenote: None }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Notebook {
-    pub id: Id,
-    pub name: String,
-    pub sections: Vec<Section>,
-}
-
-impl Notebook {
-    pub fn new(name: impl Into<String>) -> Self {
-        Self { id: new_id(), name: name.into(), sections: Vec::new() }
-    }
-}
-
-/// The whole organizational tree: notebooks → sections → pages.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Library {
-    pub notebooks: Vec<Notebook>,
-}
-
-/// Address of a page inside the library tree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PageLocation {
-    pub notebook: Id,
-    pub section: Id,
-    pub page: Id,
-}
-
-impl Library {
-    pub fn notebook_mut(&mut self, id: Id) -> Option<&mut Notebook> {
-        self.notebooks.iter_mut().find(|n| n.id == id)
-    }
-
-    pub fn section(&self, id: Id) -> Option<&Section> {
-        self.notebooks.iter().flat_map(|n| &n.sections).find(|s| s.id == id)
-    }
-
-    pub fn section_mut(&mut self, id: Id) -> Option<&mut Section> {
-        self.notebooks.iter_mut().flat_map(|n| &mut n.sections).find(|s| s.id == id)
-    }
-
-    pub fn locate_page(&self, page: Id) -> Option<PageLocation> {
-        self.notebooks.iter().find_map(|n| {
-            n.sections.iter().find_map(|s| {
-                s.pages.iter().any(|p| p.id == page).then_some(PageLocation {
-                    notebook: n.id,
-                    section: s.id,
-                    page,
-                })
-            })
-        })
-    }
-
-    /// Inserts or refreshes the index entry for `page` inside `section`.
-    pub fn upsert_page_meta(&mut self, section: Id, meta: PageMeta) -> bool {
-        let Some(sec) = self.section_mut(section) else { return false };
-        match sec.pages.iter_mut().find(|p| p.id == meta.id) {
-            Some(existing) => *existing = meta,
-            None => sec.pages.push(meta),
-        }
-        true
-    }
-
-    /// Removes a page from the index; returns true if found.
-    pub fn remove_page(&mut self, page: Id) -> bool {
-        for sec in self.notebooks.iter_mut().flat_map(|n| &mut n.sections) {
-            if let Some(i) = sec.pages.iter().position(|p| p.id == page) {
-                sec.pages.remove(i);
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Finds the local page linked to a OneNote page.
-    pub fn find_by_onenote_page(&self, onenote_page: &str) -> Option<PageLocation> {
-        let page = self
-            .notebooks
-            .iter()
-            .flat_map(|n| &n.sections)
-            .flat_map(|s| &s.pages)
-            .find(|p| p.onenote_page.as_deref() == Some(onenote_page))?;
-        self.locate_page(page.id)
-    }
-
-    /// Finds the local section linked to a OneNote section.
-    pub fn find_by_onenote_section(&self, onenote_section: &str) -> Option<(Id, Id)> {
-        self.notebooks.iter().find_map(|n| {
-            n.sections
-                .iter()
-                .find(|s| s.onenote.as_ref().is_some_and(|l| l.section_id == onenote_section))
-                .map(|s| (n.id, s.id))
-        })
-    }
-
-    pub fn all_tags(&self) -> Vec<String> {
-        let mut tags: Vec<String> = self
-            .notebooks
-            .iter()
-            .flat_map(|n| &n.sections)
-            .flat_map(|s| &s.pages)
-            .flat_map(|p| p.tags.iter().cloned())
-            .collect();
-        tags.sort_by_key(|t| t.to_lowercase());
-        tags.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-        tags
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ink_left_of_the_page_is_moved_onto_it() {
+        let mut page = Page::new("rtl");
+        let mut s = Stroke::new(Pen::default());
+        s.points = vec![Point::new(-1000.0, 50.0, 0.5), Point::new(-10.0, 60.0, 0.5)];
+        page.strokes.push(s);
+        assert!(page.move_ink_onto_page());
+        let p = &page.strokes[0].points;
+        assert_eq!((p[0].x, p[0].y, p[1].x), (40.0, 50.0, 1030.0));
+        assert!(page.width >= 1030.0);
+        // Ink already on the page, even touching its edge, stays put.
+        assert!(!page.move_ink_onto_page());
+        page.strokes[0].points[0].x = 0.0;
+        assert!(!page.move_ink_onto_page());
+    }
+
     use super::*;
 
     #[test]
@@ -429,17 +404,23 @@ mod tests {
     }
 
     #[test]
-    fn library_locate_and_remove() {
-        let mut lib = Library::default();
-        let mut nb = Notebook::new("NB");
-        let mut sec = Section::new("S");
-        let page = Page::new("P");
-        sec.pages.push(page.meta());
-        let sec_id = sec.id;
-        nb.sections.push(sec);
-        lib.notebooks.push(nb);
-        assert_eq!(lib.locate_page(page.id).unwrap().section, sec_id);
-        assert!(lib.remove_page(page.id));
-        assert!(lib.locate_page(page.id).is_none());
+    fn page_file_roundtrip_keeps_items_and_drops_title() {
+        let mut page = Page::new("Plan");
+        page.texts.push(TextBox { id: new_id(), x: 10.0, y: 20.0, width: 200.0, text: "שלום hello".into(), size: 18.0, color: Color::BLACK });
+        page.images.push(ImageItem { id: new_id(), x: 0.0, y: 0.0, width: 50.0, height: 40.0, src: "data:image/png;base64,AAAA".into() });
+        let json = serde_json::to_string(&page).unwrap();
+        assert!(json.starts_with(r#"{"format":"sketcher/page","version":2,"#), "{json}");
+        assert!(!json.contains("Plan"));
+        let back: Page = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.texts, page.texts);
+        assert_eq!(back.images, page.images);
+        assert_eq!(back.title, "");
+    }
+
+    #[test]
+    fn version_1_pages_still_load() {
+        let old = r#"{"id":"6ca13678-8528-4b35-b9d7-e84c845ebb50","title":"Old","tags":["a"],"paper":"Lined","width":794.0,"height":1123.0,"strokes":[],"created":1,"modified":2,"onenote":null}"#;
+        let page: Page = serde_json::from_str(old).unwrap();
+        assert_eq!((page.paper, page.tags.len(), page.texts.len()), (Paper::Lined, 1, 0));
     }
 }

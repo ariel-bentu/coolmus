@@ -122,6 +122,20 @@ mod tests {
     use sketch_core::{Pen, PenStyle};
 
     #[test]
+    fn round_caps_extend_past_endpoints() {
+        let mut page = Page::new("t");
+        page.width = 100.0;
+        page.height = 60.0;
+        let pen = Pen { width: 20.0, pressure_sensitive: false, ..Pen::default() };
+        page.strokes.push(stroke_from_xy(pen, &[(30.0, 30.0), (70.0, 30.0)]));
+        let px = render(&page, RasterOptions { paper: false, ..Default::default() }).unwrap();
+        let alpha = |x: u32, y: u32| px.pixel(x, y).unwrap().alpha();
+        assert!(alpha(76, 30) > 200, "end cap missing");
+        assert!(alpha(24, 30) > 200, "start cap missing");
+        assert_eq!(alpha(30, 5), 0);
+    }
+
+    #[test]
     fn renders_png() {
         let mut page = Page::new("t");
         for style in PenStyle::ALL {

@@ -2,35 +2,44 @@
 
 use std::path::PathBuf;
 
-use onenote::{AuthConfig, ExportMode};
+use onenote::AuthConfig;
 use serde::{Deserialize, Serialize};
 use sketch_core::Pen;
 
+/// Application (client) ID of the project's own Entra app registration.
+/// Not a secret: public clients (device-code flow) ship their ID inside the app.
+pub const DEFAULT_CLIENT_ID: &str = "3f6a4493-f7eb-4548-9e76-53e0e5fc2f84";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     pub auth: AuthConfig,
-    pub export_mode: ExportMode,
-    /// When saving an already-linked page, delete the previous OneNote page.
-    pub replace_old: bool,
+    /// The folder holding all pages; `None` means the default (`Documents/Sketcher`).
+    pub root: Option<String>,
     pub smoothing: f32,
     pub pen: Pen,
-    pub recent_colors: Vec<[u8; 4]>,
+    /// UI language: "he" (right-to-left) or "en".
+    pub language: String,
+    /// Draw with a finger; otherwise touch pans/zooms and only pen/mouse draw.
+    pub touch_draws: bool,
+    /// Font size for new text boxes, in page units.
+    pub text_size: f32,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        let mut auth = AuthConfig::default();
-        if let Ok(id) = std::env::var("SKETCHER_CLIENT_ID") {
-            auth.client_id = id;
-        }
+        let auth = AuthConfig {
+            client_id: std::env::var("SKETCHER_CLIENT_ID").unwrap_or_else(|_| DEFAULT_CLIENT_ID.to_string()),
+            ..AuthConfig::default()
+        };
         Self {
             auth,
-            export_mode: ExportMode::NativeInk,
-            replace_old: true,
+            root: None,
             smoothing: 0.35,
             pen: Pen::default(),
-            recent_colors: Vec::new(),
+            language: "he".into(),
+            touch_draws: false,
+            text_size: 20.0,
         }
     }
 }
@@ -47,10 +56,15 @@ impl Settings {
     }
 
     pub fn load() -> Self {
-        std::fs::read(Self::path())
+        let mut s: Self = std::fs::read(Self::path())
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default()
+            .unwrap_or_default();
+        // Settings saved before a client ID was configured fall back to the built-in one.
+        if s.auth.client_id.trim().is_empty() {
+            s.auth.client_id = Self::default().auth.client_id;
+        }
+        s
     }
 
     pub fn save(&self) {

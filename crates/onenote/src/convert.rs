@@ -44,7 +44,7 @@ struct Payload {
     ink: Option<Fingerprint>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum ImportSource {
     /// Lossless Sketcher data attached to the page.
     SketcherData,
@@ -291,6 +291,7 @@ fn interpret(
             (page, if empty { ImportSource::Empty } else { ImportSource::NativeInk })
         }
     };
+    page.move_ink_onto_page();
     page.title = title;
     if let Some(text) = tags_text {
         let mut parsed = Vec::new();
@@ -379,5 +380,28 @@ mod tests {
         let imported = interpret("<title>Foreign</title>", vec![s], None, false, &remote());
         assert_eq!(imported.source, ImportSource::NativeInk);
         assert_eq!(imported.page.title, "Foreign");
+    }
+
+    #[test]
+    fn rtl_ink_at_negative_x_is_moved_onto_the_page() {
+        let mut s = Stroke::new(Pen::default());
+        s.points = vec![Point::new(-998.0, 51.0, 0.5), Point::new(-31.0, 502.0, 0.5)];
+        let imported = interpret("<title>RTL</title>", vec![s], None, false, &remote());
+        let b = imported.page.ink_bounds();
+        assert!(b.min_x >= 0.0 && b.max_x <= imported.page.width, "{b:?} width {}", imported.page.width);
+        // The vertical layout is kept when nothing is above the page.
+        assert_eq!(imported.page.strokes[0].points[0].y, 51.0);
+    }
+
+    #[test]
+    fn sketcher_data_with_off_page_ink_is_moved_onto_the_page() {
+        let mut page = sample_page();
+        page.strokes[0].points[0].x = -500.0;
+        let (bytes, xml) = payload_bytes(&page, ExportMode::NativeInk);
+        let payload: Payload = serde_json::from_slice(&bytes).unwrap();
+        let native = inkml::parse(&xml.unwrap()).unwrap();
+        let imported = interpret(HTML, native, Some(payload), false, &remote());
+        assert_eq!(imported.source, ImportSource::SketcherData);
+        assert_eq!(imported.page.strokes[0].points[0].x, 40.0);
     }
 }

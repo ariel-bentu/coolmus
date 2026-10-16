@@ -1,7 +1,5 @@
 //! Tag normalization and search queries.
 
-use crate::model::PageMeta;
-
 /// Canonical form of a user-typed tag: trimmed, leading `#` removed,
 /// inner whitespace collapsed to `-`. Returns `None` for empty input.
 pub fn normalize_tag(raw: &str) -> Option<String> {
@@ -49,9 +47,9 @@ impl Query {
         self.tags.is_empty() && self.words.is_empty()
     }
 
-    pub fn matches(&self, page: &PageMeta) -> bool {
-        let tags: Vec<String> = page.tags.iter().map(|t| t.to_lowercase()).collect();
-        let title = page.title.to_lowercase();
+    pub fn matches(&self, title: &str, tags: &[String]) -> bool {
+        let tags: Vec<String> = tags.iter().map(|t| t.to_lowercase()).collect();
+        let title = title.to_lowercase();
         self.tags.iter().all(|q| tags.iter().any(|t| t == q))
             && self
                 .words
@@ -63,8 +61,6 @@ impl Query {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::Page;
-
     #[test]
     fn normalize() {
         assert_eq!(normalize_tag("  #My  Idea "), Some("My-Idea".into()));
@@ -73,13 +69,12 @@ mod tests {
 
     #[test]
     fn query_matching() {
-        let mut p = Page::new("Kitchen layout");
-        p.tags = vec!["Home".into(), "design".into()];
-        let m = p.meta();
-        assert!(Query::parse("#home").matches(&m));
-        assert!(Query::parse("kitchen #design").matches(&m));
-        assert!(Query::parse("des").matches(&m));
-        assert!(!Query::parse("#des").matches(&m));
-        assert!(!Query::parse("garage").matches(&m));
+        let tags = vec!["Home".to_string(), "design".to_string()];
+        let m = |q: &str| Query::parse(q).matches("Kitchen layout", &tags);
+        assert!(m("#home"));
+        assert!(m("kitchen #design"));
+        assert!(m("des"));
+        assert!(!m("#des"));
+        assert!(!m("garage"));
     }
 }

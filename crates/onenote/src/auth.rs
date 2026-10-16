@@ -16,6 +16,7 @@ use crate::{Error, Result};
 pub const SCOPES: &str = "Notes.ReadWrite offline_access";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthConfig {
     /// Application (client) ID of your Entra ID app registration.
     pub client_id: String,
