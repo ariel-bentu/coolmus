@@ -7,7 +7,7 @@ import { SketchCanvas, colorCss } from './canvas.js';
 import { bounds, sheetCount, sheetTop, SHEET_GAP } from './ink.js';
 import { $, el, bdi, error, modal, prompt, confirmDialog, showMenu } from './ui.js';
 import { renderTree, allFolders, findNode, parentOf, baseName, isInside } from './tree.js';
-import { pagePng } from './export.js';
+import { pagePng, printSheets } from './export.js';
 import { fromBlob, pickFile, takePhoto } from './media.js';
 import { editLabel, labelText } from './labels.js';
 
@@ -29,6 +29,7 @@ function styleSvg(style, width, color) {
 }
 const OPEN_FOLDERS_KEY = 'sketcher.openFolders';
 const SIDEBAR_KEY = 'sketcher.sidebarHidden';
+const SIDEBAR_WIDTH_KEY = 'sketcher.sidebarWidth';
 
 const state = {
   tree: [], // root nodes
@@ -65,9 +66,9 @@ const widthFromSlider = (v) => Math.round(0.5 * Math.pow(80, v / 100) * 10) / 10
 const sliderFromWidth = (w) => Math.round((100 * Math.log(w / 0.5)) / Math.log(80));
 const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || $('dialog').open;
 
-async function call(cmd, args) {
+async function call(cmd, args, options) {
   try {
-    return await invoke(cmd, args);
+    return await invoke(cmd, args, options);
   } catch (e) {
     error(e);
     throw e;
@@ -269,6 +270,47 @@ function setSidebar(show) {
   }
 }
 
+/** Dragging the sidebar's edge resizes it; double-click restores the default width. */
+function bindSidebarResizer() {
+  const bar = $('sidebarResizer'), side = $('sidebar');
+  const store = (w) => {
+    try {
+      if (w) localStorage.setItem(SIDEBAR_WIDTH_KEY, w);
+      else localStorage.removeItem(SIDEBAR_WIDTH_KEY);
+    } catch {
+      /* not essential */
+    }
+  };
+  try {
+    const w = localStorage.getItem(SIDEBAR_WIDTH_KEY);
+    if (w) side.style.width = w;
+  } catch {
+    /* default width */
+  }
+  bar.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    bar.setPointerCapture(e.pointerId);
+    bar.classList.add('drag');
+    const r = side.getBoundingClientRect();
+    const move = (ev) => {
+      const w = document.dir === 'rtl' ? r.right - ev.clientX : ev.clientX - r.left;
+      side.style.width = Math.round(w) + 'px';
+    };
+    const up = () => {
+      bar.classList.remove('drag');
+      bar.removeEventListener('pointermove', move);
+      store(side.style.width);
+    };
+    bar.addEventListener('pointermove', move);
+    bar.addEventListener('pointerup', up, { once: true });
+    bar.addEventListener('pointercancel', up, { once: true });
+  });
+  bar.addEventListener('dblclick', () => {
+    side.style.width = '';
+    store(null);
+  });
+}
+
 function setTool(tool) {
   state.tool = tool;
   canvas.setTool(tool);
@@ -346,6 +388,7 @@ const treeCtx = {
   select: (node) => (state.treeSel = { path: node.path, kind: node.kind }),
   folderLabel,
   folderPath: (path) => pathNodes(folderParts(path)),
+  dropFiles,
   saveOpenFolders,
 };
 
@@ -511,34 +554,94 @@ async function pasteInto(folder) {
 }
 
 /** The folder Ctrl+V pastes into: the selected tree folder, or the selected file's folder. */
+/** Copies files and folders dropped from Finder or Explorer into `folder`. */
+async function dropFiles(entries, folder) {
+  const readDir = async (dir) => {
+    const reader = dir.createReader();
+    const all = [];
+    for (;;) {
+      const batch = await new Promise((ok, fail) => reader.readEntries(ok, fail));
+      if (!batch.length) return all;
+      all.push(...batch);
+    }
+  };
+  let count = 0;
+  const copy = async (entry, into) => {
+    if (entry.name.startsWith('.')) return; // .DS_Store and other hidden files
+    if (entry.isDirectory) {
+      const sub = await call('create_folder', { parent: into, name: entry.name });
+      for (const child of await readDir(entry)) await copy(child, sub);
+    } else {
+      const file = await new Promise((ok, fail) => entry.file(ok, fail));
+      const headers = { 'x-folder': encodeURIComponent(into), 'x-name': encodeURIComponent(file.name) };
+      await call('drop_file', new Uint8Array(await file.arrayBuffer()), { headers });
+    }
+    count++;
+  };
+  if (!entries.length) return;
+  state.busy = true;
+  renderStatus();
+  try {
+    for (const entry of entries) await copy(entry, folder);
+  } finally {
+    state.busy = false;
+    state.openFolders.add(folder);
+    saveOpenFolders();
+    await refreshTree();
+    setStatus(t('droppedFiles', count));
+  }
+}
+
 function pasteTarget() {
   const sel = state.treeSel;
   if (!sel) return state.folder;
   return sel.kind === 'folder' || sel.kind === 'root' ? sel.path : parentOf(sel.path);
 }
 
+/**
+ * Prints pages through the system print dialog: each sheet becomes an image
+ * in #printArea, the only thing the print stylesheet shows.
+ */
 async function printPages(paths, title) {
+  if (!paths.length) return error('nothingToPrint');
+  canvas.endTextEdit();
   await saveNow();
   state.busy = true;
   renderStatus();
   try {
-    await call('print', { paths, title });
+    const area = $('printArea');
+    for (const img of area.querySelectorAll('img')) URL.revokeObjectURL(img.src);
+    const imgs = [];
+    const sheets = [];
+    for (const path of paths) {
+      const page = path === state.current?.path ? state.current.page : (await call('load_page', { path })).page;
+      for (const c of await printSheets(page)) {
+        const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+        const img = el('img', { src: URL.createObjectURL(blob) });
+        imgs.push(img);
+        sheets.push(el('div', { class: 'sheet' }, img));
+      }
+    }
+    area.replaceChildren(...sheets);
+    await Promise.all(imgs.map((i) => i.decode().catch(() => {})));
+    // The title is the suggested name when printing to PDF.
+    const before = document.title;
+    document.title = title;
+    try {
+      await call('print_view');
+    } finally {
+      setTimeout(() => (document.title = before), 1000);
+    }
   } finally {
     state.busy = false;
     renderStatus();
   }
 }
 
-async function printFolder(node) {
-  await saveNow();
-  state.busy = true;
-  renderStatus();
-  try {
-    await call('print_folder', { folder: node.path, title: labelText(node.label) || node.name });
-  } finally {
-    state.busy = false;
-    renderStatus();
-  }
+/** Prints the pages directly inside a folder, in tree order. */
+function printFolder(node) {
+  const pages = (findNode(state.tree, node.path)?.children ?? []).filter((n) => n.kind === 'page');
+  return printPages(pages.map((n) => n.path), labelText(node.label) || node.name);
 }
 
 async function importOneNote(folder) {
@@ -865,6 +968,7 @@ function bind() {
     /* storage unavailable: show it */
   }
   setSidebar(!sidebarHidden);
+  bindSidebarResizer();
   $('exitFull').addEventListener('click', () => setFullPage(false));
   $('settingsBtn').addEventListener('click', openSettings);
   $('newPageBtn').addEventListener('click', () => newPage());
@@ -954,6 +1058,15 @@ function bind() {
     }
   });
   $('stage').addEventListener('dragover', (e) => {
+    if (e.dataTransfer.types.includes('Files')) e.preventDefault();
+  });
+  // Anywhere else a dropped file would be opened in place of the app.
+  document.addEventListener('dragover', (e) => {
+    if (e.defaultPrevented || !e.dataTransfer.types.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'none';
+  });
+  document.addEventListener('drop', (e) => {
     if (e.dataTransfer.types.includes('Files')) e.preventDefault();
   });
   $('stage').addEventListener('drop', (e) => {

@@ -165,6 +165,20 @@ pub async fn paste_items(state: State<'_, AppState>, folder: String, cut: Vec<St
     Ok(Pasted { paths: store.copy_into(&files, &folder).map_err(err)?, moved: false })
 }
 
+/// Writes a file dropped on a folder: the body is its contents, the
+/// URI-encoded `x-folder` and `x-name` headers say where. Returns its path.
+#[tauri::command]
+pub fn drop_file(state: State<AppState>, request: tauri::ipc::Request<'_>) -> CmdResult<String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("expected file contents".into());
+    };
+    let header = |key: &str| -> CmdResult<String> {
+        let raw = request.headers().get(key).and_then(|v| v.to_str().ok()).ok_or_else(|| format!("missing {key}"))?;
+        percent_encoding::percent_decode_str(raw).decode_utf8().map(|s| s.into_owned()).map_err(err)
+    };
+    state.store().write_file(&header("x-folder")?, &header("x-name")?, bytes).map_err(err)
+}
+
 // ---------- roots ----------
 
 /// Lets the user add a folder to the tree. Returns the new tree, or None if
@@ -238,28 +252,11 @@ pub fn open_external(state: State<AppState>, path: String) -> CmdResult<()> {
     open::that(target).map_err(err)
 }
 
-/// Prints pages: writes them as one PDF to a temporary folder and opens it
-/// in the system PDF viewer, which shows the print dialog's options
-/// (printer, copies, page range, preview).
+/// Opens the system print dialog for the webview; the UI's print stylesheet
+/// shows only the sheets it prepared.
 #[tauri::command]
-pub async fn print(state: State<'_, AppState>, paths: Vec<String>, title: String) -> CmdResult<()> {
-    if paths.is_empty() {
-        return Err("nothingToPrint".into());
-    }
-    let pdf = state.store().print(&paths, &title).map_err(err)?;
-    let dir = std::env::temp_dir().join("Sketcher Print");
-    std::fs::create_dir_all(&dir).map_err(err)?;
-    let name = sketch_store::sanitize_name(&title).unwrap_or_else(|_| "Sketcher".into());
-    let file = dir.join(format!("{name}.pdf"));
-    std::fs::write(&file, pdf).map_err(err)?;
-    open::that(file).map_err(err)
-}
-
-/// Prints every page directly inside `folder`, in tree order.
-#[tauri::command]
-pub async fn print_folder(state: State<'_, AppState>, folder: String, title: String) -> CmdResult<()> {
-    let paths = state.store().pages_in(&folder).map_err(err)?;
-    print(state, paths, title).await
+pub fn print_view(window: tauri::WebviewWindow) -> CmdResult<()> {
+    window.print().map_err(err)
 }
 
 #[derive(Serialize)]

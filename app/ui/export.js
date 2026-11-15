@@ -1,5 +1,5 @@
-// Renders a whole page (all its sheets: paper, pictures, ink, text) into one
-// PNG, the same way the screen draws it.
+// Renders pages (paper, pictures, ink, text) the same way the screen draws
+// them: as one PNG, or as sheet images for printing.
 
 import { PAPER_COLOR, drawPaper, effectiveColor, sheetRects, strokePath, totalHeight } from './ink.js';
 import { colorCss } from './canvas.js';
@@ -50,24 +50,23 @@ function drawText(ctx, box) {
   }
 }
 
-/** Returns the page as a base64 PNG (no data: prefix). */
-export async function pagePng(page, scale = 2) {
+/** Draws the page's sheets and content between y and y + h into a new canvas. */
+async function renderRegion(page, y, h, scale) {
   const c = document.createElement('canvas');
   c.width = Math.ceil(page.width * scale);
-  const height = totalHeight(page);
-  c.height = Math.ceil(height * scale);
+  c.height = Math.ceil(h * scale);
   const ctx = c.getContext('2d');
-  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+  ctx.setTransform(scale, 0, 0, scale, 0, -y * scale);
   const sheets = sheetRects(page);
   const clip = new Path2D();
   ctx.fillStyle = '#d5d7db'; // the gaps between sheets
-  ctx.fillRect(0, 0, page.width, height);
+  ctx.fillRect(0, y, page.width, h);
   ctx.fillStyle = PAPER_COLOR;
   for (const r of sheets) {
     ctx.fillRect(r.x, r.y, r.w, r.h);
     clip.rect(r.x, r.y, r.w, r.h);
   }
-  drawPaper(ctx, page, { minX: 0, minY: 0, maxX: page.width, maxY: height }, scale);
+  drawPaper(ctx, page, { minX: 0, minY: y, maxX: page.width, maxY: y + h }, scale);
   ctx.clip(clip);
   for (const im of page.images) {
     const img = await load(im.src);
@@ -81,5 +80,28 @@ export async function pagePng(page, scale = 2) {
     }
   }
   for (const box of page.texts) drawText(ctx, box);
+  return c;
+}
+
+/** Returns the page as a base64 PNG (no data: prefix). */
+export async function pagePng(page, scale = 2) {
+  const c = await renderRegion(page, 0, totalHeight(page), scale);
   return c.toDataURL('image/png').split(',')[1];
+}
+
+/**
+ * The page as printed sheets: one canvas per sheet, and sheets taller than
+ * A4's proportions (long OneNote imports) cut into A4-shaped pieces.
+ */
+export async function printSheets(page, scale = 3) {
+  const out = [];
+  const a4 = page.width * Math.SQRT2;
+  for (const r of sheetRects(page)) {
+    const n = Math.max(1, Math.ceil(r.h / a4 - 0.01));
+    for (let i = 0; i < n; i++) {
+      const y = r.y + i * a4;
+      out.push(await renderRegion(page, y, Math.min(a4, r.y + r.h - y), scale));
+    }
+  }
+  return out;
 }

@@ -9,6 +9,13 @@ use tauri::Manager;
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     tauri::Builder::default()
+        // The window only ever shows the app: a file dropped on it or a stray
+        // link would otherwise replace Sketcher with that document.
+        .plugin(
+            tauri::plugin::Builder::<tauri::Wry>::new("stay-in-app")
+                .on_navigation(|_, url| is_app_url(url))
+                .build(),
+        )
         .setup(|app| {
             app.manage(backend::AppState::init());
             Ok(())
@@ -27,16 +34,26 @@ fn main() {
             commands::set_folder_label,
             commands::copy_items,
             commands::paste_items,
+            commands::drop_file,
             commands::add_root,
             commands::remove_root,
             commands::update_settings,
             commands::reveal,
             commands::open_external,
-            commands::print,
-            commands::print_folder,
+            commands::print_view,
             commands::save_png,
             commands::import_onenote,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sketcher");
+}
+
+/// The app's own pages: tauri://localhost on macOS and Linux,
+/// http(s)://tauri.localhost on Windows.
+fn is_app_url(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "tauri" => true,
+        "http" | "https" => url.host_str() == Some("tauri.localhost"),
+        _ => false,
+    }
 }

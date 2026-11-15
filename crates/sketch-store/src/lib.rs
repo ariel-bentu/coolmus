@@ -227,6 +227,14 @@ fn stem_of(name: &str) -> &str {
 }
 
 /// Copies a file or a whole folder.
+/// "notes.pdf" → ("notes", ".pdf"); a name without a stem keeps it whole.
+fn split_ext(name: &str) -> (String, String) {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+        _ => (name.to_string(), String::new()),
+    }
+}
+
 fn copy_all(from: &Path, to: &Path) -> Result<()> {
     if from.is_dir() {
         fs::create_dir(to).map_err(io_err(to))?;
@@ -510,10 +518,7 @@ impl Store {
         if path.is_dir() {
             return Ok((name, String::new()));
         }
-        Ok(match name.rsplit_once('.') {
-            Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
-            _ => (name, String::new()),
-        })
+        Ok(split_ext(&name))
     }
 
     /// Renames a page or folder (give a page's name without extension).
@@ -559,6 +564,16 @@ impl Store {
             out.push(api_path(&to));
         }
         Ok(out)
+    }
+
+    /// Writes a new file into `folder` (e.g. dropped from Finder or Explorer,
+    /// which give the contents but not the path); a name already taken gets
+    /// " (2)". Returns its path.
+    pub fn write_file(&mut self, folder: &str, name: &str, bytes: &[u8]) -> Result<String> {
+        let (stem, ext) = split_ext(name);
+        let file = Self::unique(&self.resolve(folder)?, &stem, &ext, None)?;
+        write_atomic(&file, bytes)?;
+        Ok(api_path(&file))
     }
 
     /// Moves a file or folder to the system trash (Recycle Bin), never deleting outright.
@@ -649,6 +664,10 @@ mod tests {
         // Files from outside the roots can be copied in, e.g. pasted from Explorer.
         fs::write(outside.join("notes.txt"), "x").unwrap();
         assert_eq!(store.copy_into(&[outside.join("notes.txt")], &api_path(&a)).unwrap(), vec![api_path(&a.join("notes.txt"))]);
+        // Dropped files arrive as contents and get a free name.
+        assert_eq!(store.write_file(&api_path(&a), "notes.txt", b"y").unwrap(), api_path(&a.join("notes (2).txt")));
+        assert!(matches!(store.write_file(&api_path(&outside), "x.txt", b"y"), Err(StoreError::InvalidPath)));
+        assert_eq!(store.write_file(&api_path(&a), "../x.txt", b"y").unwrap(), api_path(&a.join("..-x.txt")), "stays in the folder");
         // …but nothing outside the roots can be changed.
         let foreign = api_path(&outside.join("notes.txt"));
         assert!(matches!(store.rename(&foreign, "x"), Err(StoreError::InvalidPath)));

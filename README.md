@@ -75,7 +75,7 @@ Pick `Open Notebook.onetoc2` to import a whole notebook, or one `.one` file for 
 
 ### Printing
 
-**Print** (Ctrl+P, the page menu, or right-click a page) and **Print the pages in this folder** (right-click a folder) write one PDF to a temporary folder and open it in your PDF viewer (Edge, unless you chose another). Print from there: the viewer's print dialog has the printer, copies, page range and preview. The printed copy doesn't include the page data.
+**Print** (Ctrl+P, the page menu, or right-click a page) and **Print the pages in this folder** (right-click a folder) open the system print dialog straight away, with the printer, copies, page range, preview and *Save as PDF*. Each sheet prints as one A4 page (rendered at about 290 dpi); sheets taller than A4, such as long OneNote imports, are split across pages. To print from your PDF viewer instead, use *Open in PDF viewer*.
 
 ### Calculated folder labels
 

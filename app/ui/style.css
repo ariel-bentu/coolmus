@@ -99,7 +99,7 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 main { flex: 1; display: flex; min-height: 0; }
 #pageCol { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 #sidebar {
-  width: 260px; min-width: 180px; max-width: 480px; resize: horizontal; overflow: auto;
+  width: 260px; min-width: 180px; max-width: 60vw; overflow: auto;
   background: var(--panel); border-inline-end: 1px solid var(--border);
   padding: 10px; display: flex; flex-direction: column; gap: 8px;
 }
@@ -109,7 +109,6 @@ body.noSidebar #sidebar { display: none; }
 #tagCloud button { font-size: 12px; min-height: 22px; padding: 1px 8px; border-radius: 999px; }
 #tagCloud button.on { background: var(--accent); color: var(--accent-text); }
 #tree { flex: 1; overflow: auto; }
-.hint { color: var(--muted); font-size: 11px; margin: 0; }
 
 details > summary { list-style: none; cursor: pointer; padding: 4px 6px; border-radius: 6px; display: flex; gap: 6px; align-items: center; }
 details > summary::-webkit-details-marker { display: none; }
@@ -142,6 +141,16 @@ details .children { padding-inline-start: 16px; }
 #tree .row.drop { outline: 2px dashed var(--accent); outline-offset: -2px; }
 #tree .ico svg { width: 17px; height: 17px; color: var(--muted); }
 #tree .folder .ico svg { color: #d9a400; fill: rgba(249, 212, 0, 0.25); }
+#tree .rowMenu {
+  margin-inline-start: auto; flex-shrink: 0; border: none; background: none;
+  min-height: 0; padding: 2px; border-radius: 6px; display: inline-flex;
+}
+#tree .rowMenu:hover { background: var(--hover); }
+#tree .rowMenu svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
+#sidebarResizer { width: 6px; margin-inline-start: -3px; margin-inline-end: -3px; cursor: col-resize; z-index: 1; touch-action: none; }
+#sidebarResizer:hover, #sidebarResizer.drag { background: var(--accent); opacity: 0.4; }
+body.noSidebar #sidebarResizer { display: none; }
+body.full #sidebarResizer { display: none; }
 #tree .chevBtn { display: inline-flex; width: 18px; justify-content: center; }
 #tree .chev { width: 14px; height: 14px; color: var(--muted); transition: transform 0.12s; }
 html[dir=rtl] #tree .chev { transform: scaleX(-1); }
@@ -253,3 +262,20 @@ body.full #exitFull {
 }
 body.full #exitFull:hover, body.full #exitFull:active, body.full #exitFull:focus-visible { opacity: 1; }
 body.full #exitFull svg { width: 22px; height: 22px; }
+
+/* Printing: only the sheet images in #printArea, one per A4 page. WebKit
+   lays the page out at the window's width and scales it to the paper, so
+   mm and vh don't match the paper: each sheet is a box as wide as the page
+   with A4's proportions, a hair shorter so rounding never spills onto an
+   extra, empty page. */
+#printArea { display: none; }
+@media print {
+  @page { size: A4; margin: 0; }
+  html, body { height: auto; background: #fff; }
+  body { display: block; }
+  body > :not(#printArea) { display: none !important; }
+  #printArea { display: block; }
+  #printArea .sheet { width: 100%; aspect-ratio: 210 / 296.5; overflow: hidden; break-after: page; break-inside: avoid; }
+  #printArea .sheet:last-child { break-after: auto; }
+  #printArea img { display: block; width: 100%; height: 100%; object-fit: contain; object-position: top; }
+}

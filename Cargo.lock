@@ -3803,6 +3803,7 @@ dependencies = [
  "log",
  "onenote-import",
  "open",
+ "percent-encoding",
  "rfd",
  "serde",
  "serde_json",

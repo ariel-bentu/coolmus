@@ -8,6 +8,7 @@ import { labelText } from './labels.js';
 const FOLDER = '<svg viewBox="0 0 24 24"><path d="M3 6a1 1 0 011-1h5l2 2h9a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1z"/></svg>';
 const PAGE = '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 14c2-3 3 1 6-2"/></svg>';
 const PDF = '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16h6M9 10h2"/></svg>';
+const DOTS = '<svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="12" cy="19" r="1.6"/></svg>';
 const CHEVRON = '<svg viewBox="0 0 24 24" class="chev"><path d="M9 6l6 6-6 6"/></svg>';
 const DRAG_TYPE = 'text/x-sketcher-path';
 
@@ -39,7 +40,7 @@ export function findNode(nodes, path) {
  * { state, open(node), newPage(folder), newFolder(parent), rename(node),
  *   move(node), moveTo(path, folder), remove(node), editLabel(node),
  *   reveal(path), openExternal(path), copy(node), cut(node), paste(folder),
- *   print(node), importOneNote(folder), removeRoot(node), folderLabel(path), folderPath(path), select(node), saveOpenFolders() }
+ *   print(node), importOneNote(folder), removeRoot(node), dropFiles(entries, folder), folderLabel(path), folderPath(path), select(node), saveOpenFolders() }
  */
 export async function renderTree(ctx) {
   const { state } = ctx;
@@ -159,22 +160,34 @@ function fileRow(ctx, node, depth) {
     ctx.select(node);
     ctx.open(node);
   });
+  const menu = (x, y) => showMenu(x, y, [
+    isPage && { text: t('print'), action: () => ctx.print(node) },
+    { text: t('openInViewer'), action: () => ctx.openExternal(node.path) },
+    { text: t('revealFolder'), action: () => ctx.reveal(node.path) },
+    '-',
+    { text: t('copyItem'), action: () => ctx.copy(node) },
+    { text: t('cutItem'), action: () => ctx.cut(node) },
+    { text: t('rename'), action: () => ctx.rename(node) },
+    { text: t('moveTo'), action: () => ctx.move(node) },
+    '-',
+    { text: t('delete'), danger: true, action: () => ctx.remove(node) },
+  ]);
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     ctx.select(node);
-    showMenu(e.clientX, e.clientY, [
-      isPage && { text: t('print'), action: () => ctx.print(node) },
-      { text: t('openInViewer'), action: () => ctx.openExternal(node.path) },
-      { text: t('revealFolder'), action: () => ctx.reveal(node.path) },
-      '-',
-      { text: t('copyItem'), action: () => ctx.copy(node) },
-      { text: t('cutItem'), action: () => ctx.cut(node) },
-      { text: t('rename'), action: () => ctx.rename(node) },
-      { text: t('moveTo'), action: () => ctx.move(node) },
-      '-',
-      { text: t('delete'), danger: true, action: () => ctx.remove(node) },
-    ]);
+    menu(e.clientX, e.clientY);
   });
+  // The open page gets a visible menu button (for touch, where there is no right click).
+  if (node.path === state.current?.path) {
+    const btn = el('button', { class: 'rowMenu', title: t('moreActions'), html: DOTS });
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const r = btn.getBoundingClientRect();
+      menu(document.dir === 'rtl' ? r.left : r.right, r.bottom + 2);
+    });
+    row.append(btn);
+  }
+  dropTarget(ctx, row, parentOf(node.path));
   dragSource(row, node.path);
   return row;
 }
@@ -186,19 +199,25 @@ function dragSource(row, path) {
   });
 }
 
+/** Drops onto `folder`: a tree item moves there, files from Finder or Explorer are copied in. */
 function dropTarget(ctx, row, folder) {
+  const accepts = (e) => e.dataTransfer.types.includes(DRAG_TYPE) || e.dataTransfer.types.includes('Files');
   row.addEventListener('dragover', (e) => {
-    if (!e.dataTransfer.types.includes(DRAG_TYPE)) return;
+    if (!accepts(e)) return;
     e.preventDefault();
+    e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
     row.classList.add('drop');
   });
   row.addEventListener('dragleave', () => row.classList.remove('drop'));
   row.addEventListener('drop', (e) => {
     row.classList.remove('drop');
-    const path = e.dataTransfer.getData(DRAG_TYPE);
-    if (!path) return;
+    if (!accepts(e)) return;
     e.preventDefault();
-    ctx.moveTo(path, folder);
+    const path = e.dataTransfer.getData(DRAG_TYPE);
+    if (path) return ctx.moveTo(path, folder);
+    // The entries must be taken now: the drop's data is gone once it returns.
+    const entries = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+    ctx.dropFiles(entries, folder);
   });
 }
 
