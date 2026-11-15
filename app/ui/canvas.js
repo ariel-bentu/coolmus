@@ -306,8 +306,12 @@ export class SketchCanvas {
     this.clearSelection();
     const ta = document.createElement('textarea');
     ta.className = 'textEdit';
-    ta.dir = 'auto';
     ta.value = box.text ?? '';
+    // The text's own direction once there is some; until then the
+    // interface's, so the caret waits at the click (the right edge in Hebrew).
+    const direction = () => (ta.dir = ta.value.trim() ? 'auto' : document.documentElement.dir || 'ltr');
+    direction();
+    ta.addEventListener('input', direction);
     ta.spellcheck = false;
     Object.assign(ta.style, {
       left: box.x + 'px', top: box.y + 'px', width: box.width + 'px',
@@ -763,8 +767,14 @@ export class SketchCanvas {
       const id = this.pick(x, y);
       if (id && this.page.texts.some((b) => b.id === id)) this.editText(id);
       else if (onSheet(this.page, x, y)) {
-        const width = Math.max(120, Math.min(320, this.page.width - x - 16));
-        this.beginTextEdit({ id: null, x: Math.round(x), y: Math.round(y - this.textSize * 0.65), width, text: '', size: this.textSize, color: this.pen.color });
+        // The click is where writing starts: the box's left edge, or its
+        // right edge in a right-to-left (Hebrew) interface.
+        const sheet = sheetRects(this.page).find((r) => y >= r.y && y <= r.y + r.h);
+        const rtl = document.documentElement.dir === 'rtl';
+        const room = rtl ? x - sheet.x - 16 : sheet.x + sheet.w - x - 16;
+        const width = Math.max(120, Math.min(320, room));
+        const left = rtl ? Math.max(sheet.x, x - width) : x;
+        this.beginTextEdit({ id: null, x: Math.round(left), y: Math.round(y - this.textSize * 0.65), width, text: '', size: this.textSize, color: this.pen.color });
       }
       e.preventDefault(); // keep focus in the new text box
     } else if ((e.button === 0 || e.pointerType !== 'mouse') && onSheet(this.page, ...this.toPage(e))) {

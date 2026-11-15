@@ -72,6 +72,8 @@ export function confirmDialog(text, sub, action = t('delete')) {
   });
 }
 
+const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
+
 export function showMenu(x, y, items) {
   const m = $('menu');
   m.replaceChildren(
@@ -80,7 +82,13 @@ export function showMenu(x, y, items) {
         ? el('hr')
         : it.label
           ? el('div', { class: 'label', text: it.label })
-          : el('button', { class: (it.danger ? 'danger' : '') + (it.on ? ' on' : ''), disabled: it.disabled, html: it.html, onclick: () => { hideMenu(); it.action(); } }, it.text ?? ''),
+          : el('button', {
+              class: (it.danger ? 'danger' : '') + (it.on ? ' on' : ''),
+              disabled: it.disabled,
+              // `icon`: an SVG shown before the text.
+              html: it.icon ? `${it.icon}<span>${escapeHtml(it.text ?? '')}</span>` : it.html,
+              onclick: () => { hideMenu(); it.action(); },
+            }, it.icon ? '' : it.text ?? ''),
     ),
   );
   m.hidden = false;

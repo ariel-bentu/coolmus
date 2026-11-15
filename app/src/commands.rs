@@ -5,7 +5,7 @@
 //! roots. Commands that read or write PDFs are async so they run off the UI
 //! thread.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use base64::Engine;
 use clipboard_rs::{Clipboard, ClipboardContext};
@@ -273,7 +273,8 @@ pub struct Imported {
     pages: usize,
 }
 
-fn write_import(store: &mut sketch_store::Store, entry: &onenote_import::Entry, folder: &str) -> Result<String, sketch_store::StoreError> {
+/// Writes `entry` as folders and pages, calling `progress` after each page.
+fn write_import(store: &mut sketch_store::Store, entry: &onenote_import::Entry, folder: &str, progress: &mut dyn FnMut()) -> Result<String, sketch_store::StoreError> {
     use onenote_import::Entry;
     let fallback = |name: &str| if sketch_store::sanitize_name(name).is_ok() { name.to_string() } else { "OneNote".into() };
     match entry {
@@ -285,30 +286,52 @@ fn write_import(store: &mut sketch_store::Store, entry: &onenote_import::Entry, 
                     page.title = "Untitled".into();
                 }
                 store.create_page(&dir, &page)?;
+                progress();
             }
             Ok(dir)
         }
         Entry::Group { name, entries } => {
             let dir = store.create_folder(folder, &fallback(name))?;
             for e in entries {
-                write_import(store, e, &dir)?;
+                write_import(store, e, &dir, progress)?;
             }
             Ok(dir)
         }
     }
 }
 
-/// Imports a OneNote notebook (`.onetoc2`) or section (`.one`) file into
-/// `folder`: a folder per notebook, section and section group, and a page
-/// file per page. Returns None if cancelled.
+/// Lets the user pick OneNote files (sections and notebooks) to import.
+/// Empty if cancelled.
 #[tauri::command]
-pub async fn import_onenote(state: State<'_, AppState>, folder: String) -> CmdResult<Option<Imported>> {
-    let Some(file) = rfd::AsyncFileDialog::new().add_filter("OneNote", &["onetoc2", "one"]).pick_file().await else {
-        return Ok(None);
+pub async fn pick_onenote_files() -> Vec<String> {
+    let files = rfd::AsyncFileDialog::new().add_filter("OneNote", &["one", "onetoc2"]).pick_files().await.unwrap_or_default();
+    files.iter().map(|f| f.path().display().to_string()).collect()
+}
+
+/// Progress of [`import_onenote`], sent as `onenote-progress` after each page.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportProgress {
+    file: String,
+    pages_done: usize,
+    pages: usize,
+}
+
+/// Imports one OneNote file into a new folder inside `folder`, named after
+/// the section file or the notebook.
+#[tauri::command]
+pub async fn import_onenote(app: tauri::AppHandle, state: State<'_, AppState>, file: String, folder: String) -> CmdResult<Imported> {
+    use tauri::Emitter;
+    let entry = onenote_import::read_file(Path::new(&file)).map_err(err)?;
+    let pages = entry.page_count();
+    let mut done = 0;
+    let mut progress = || {
+        let _ = app.emit("onenote-progress", ImportProgress { file: file.clone(), pages_done: done, pages });
+        done += 1;
     };
-    let entry = onenote_import::read_file(file.path()).map_err(err)?;
-    let folder = write_import(&mut state.store(), &entry, &folder).map_err(err)?;
-    Ok(Some(Imported { folder, pages: entry.page_count() }))
+    progress();
+    let folder = write_import(&mut state.store(), &entry, &folder, &mut progress).map_err(err)?;
+    Ok(Imported { folder, pages })
 }
 
 /// Asks for a file name and writes a PNG rendered by the UI (base64).

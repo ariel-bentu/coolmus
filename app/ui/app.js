@@ -28,6 +28,21 @@ function styleSvg(style, width, color) {
   if (style === 'Pencil') attrs += ' stroke-opacity="0.7"';
   return `<svg viewBox="0 0 64 24" class="styleLine"><rect width="64" height="24" rx="4" class="paper"/><path d="M8 15C18 5 26 19 36 12S52 7 56 10" ${attrs}/></svg>`;
 }
+const icon = (paths) => `<svg viewBox="0 0 24 24" class="menuIcon">${paths}</svg>`;
+const SHEET = '<path d="M6 3h12v18H6z"/>';
+const ICONS = {
+  paper_Blank: icon(SHEET),
+  paper_Lined: icon(SHEET + '<path d="M9 9h6M9 13h6M9 17h6"/>'),
+  paper_Grid: icon(SHEET + '<path d="M6 9h12M6 15h12M10 3v18M14 3v18"/>'),
+  paper_Dotted: icon(SHEET + '<path d="M9.5 8.5h.01M14.5 8.5h.01M9.5 12h.01M14.5 12h.01M9.5 15.5h.01M14.5 15.5h.01" stroke-width="2.6"/>'),
+  addSheet: icon('<path d="M6 3h8l4 4v14H6z"/><path d="M12 10v7M8.5 13.5h7"/>'),
+  removeSheet: icon('<path d="M6 3h8l4 4v14H6z"/><path d="M8.5 13.5h7"/>'),
+  clearPage: icon('<path d="M4 7h16M9 7V4h6v3M6.5 7l1 13h9l1-13M10 11v6M14 11v6"/>'),
+  print: icon('<path d="M7 9V3h10v6"/><rect x="3" y="9" width="18" height="8" rx="2"/><path d="M7 14h10v7H7z"/>'),
+  openInViewer: icon('<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 14v5a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1h5"/>'),
+  revealFolder: icon('<path d="M3 6a1 1 0 011-1h5l2 2h9a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1z"/>'),
+  exportPng: icon('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9.5" r="1.6"/><path d="M4 19l5-5 4 4 3-3 4 4"/>'),
+};
 const OPEN_FOLDERS_KEY = 'sketcher.openFolders';
 const SIDEBAR_KEY = 'sketcher.sidebarHidden';
 const SIDEBAR_WIDTH_KEY = 'sketcher.sidebarWidth';
@@ -652,24 +667,60 @@ function printFolder(node) {
   return printPages(pages.map((n) => n.path), labelText(node.label) || node.name);
 }
 
+/**
+ * Shows a long task's progress in the status bar: `text`, and a bar filled
+ * `done` of `total` (moving back and forth when total is 0). null hides it.
+ */
+function showProgress(p) {
+  $('progressSpin').hidden = !p;
+  $('progress').hidden = !p;
+  if (!p) return;
+  setStatus(p.text);
+  if (p.total) {
+    $('progress').max = p.total;
+    $('progress').value = p.done;
+  } else $('progress').removeAttribute('value');
+}
+
+/** Imports OneNote files the user picks, each into its own folder inside `folder`. */
 async function importOneNote(folder) {
+  const files = await call('pick_onenote_files');
+  if (!files.length) return;
   await saveNow();
-  state.busy = true;
-  renderStatus();
-  setStatus(t('importingOneNote'));
+  const name = (path) => path.split(/[\\/]/).pop().replace(/\.(one|onetoc2)$/i, '');
+  let current = { index: 0, name: '' };
+  const show = (done = 0, total = 0) =>
+    showProgress({
+      text: t('importingOneNote', current.name, current.index, files.length) + (total ? ' · ' + t('importingPages', done, total) : ''),
+      done,
+      total,
+    });
+  const unlisten = await window.__TAURI__.event.listen('onenote-progress', (e) => show(e.payload.pagesDone, e.payload.pages));
+  let pages = 0;
+  let last = null;
+  const failed = [];
   try {
-    const done = await call('import_onenote', { folder });
-    setStatus('');
-    if (!done) return;
+    for (const [i, file] of files.entries()) {
+      current = { index: i + 1, name: name(file) };
+      show(); // reading the file, before its pages are known
+      try {
+        const done = await invoke('import_onenote', { file, folder });
+        pages += done.pages;
+        last = done.folder;
+        state.openFolders.add(done.folder);
+      } catch (e) {
+        failed.push(`${current.name}: ${e}`);
+      }
+    }
+  } finally {
+    unlisten();
+    showProgress(null);
     state.openFolders.add(folder);
-    state.openFolders.add(done.folder);
-    state.folder = done.folder;
+    if (files.length === 1 && last) state.folder = last;
     saveOpenFolders();
     await refreshTree();
-    setStatus(t('importedOneNote', done.pages, folderLabel(done.folder)));
-  } finally {
-    state.busy = false;
-    renderStatus();
+    setStatus(t('importedOneNote', pages, files.length - failed.length, folderLabel(folder)));
+    if (failed.length) error(t('importFailed', failed.join('\n')));
   }
 }
 
@@ -996,20 +1047,21 @@ function bind() {
         ? []
         : [
             { label: t('paper') },
-            ...PAPERS.map((p) => ({ text: (c.page.paper === p ? '✓ ' : ' ') + t('paper_' + p), action: () => { c.page.paper = p; changed(); canvas.invalidate(); } })),
+            ...PAPERS.map((p) => ({ icon: ICONS['paper_' + p], text: t('paper_' + p), on: c.page.paper === p, action: () => { c.page.paper = p; changed(); canvas.invalidate(); } })),
             '-',
-            { text: t('addSheet'), action: addSheet },
-            { text: t('removeSheet'), disabled: sheetCount(c.page) < 2, action: removeLastSheet },
+            { icon: ICONS.addSheet, text: t('addSheet'), action: addSheet },
+            { icon: ICONS.removeSheet, text: t('removeSheet'), disabled: sheetCount(c.page) < 2, action: removeLastSheet },
           ]),
       {
-        text: t('clearPage'), danger: true,
+        icon: ICONS.clearPage, text: t('clearPage'), danger: true,
         action: () => (c.page.strokes.length || c.page.texts.length || c.page.images.length) && commit({ strokes: [], texts: [], images: [] }),
       },
       '-',
-      { text: t('print'), action: () => printPages([c.path], baseName(c.path)) },
-      { text: t('openInViewer'), action: () => call('open_external', { path: c.path }) },
-      { text: t('revealFolder'), action: () => call('reveal', { path: c.path }) },
+      { icon: ICONS.print, text: t('print'), action: () => printPages([c.path], baseName(c.path)) },
+      { icon: ICONS.openInViewer, text: t('openInViewer'), action: () => call('open_external', { path: c.path }) },
+      { icon: ICONS.revealFolder, text: t('revealFolder'), action: () => call('reveal', { path: c.path }) },
       {
+        icon: ICONS.exportPng,
         text: t('exportPng'),
         action: async () => {
           const p = await call('save_png', { name: baseName(c.path), data: await pagePng(c.page) });

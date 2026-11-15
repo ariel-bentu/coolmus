@@ -43,6 +43,7 @@ fn main() {
             commands::open_external,
             commands::print_view,
             commands::save_png,
+            commands::pick_onenote_files,
             commands::import_onenote,
         ])
         .run(tauri::generate_context!())

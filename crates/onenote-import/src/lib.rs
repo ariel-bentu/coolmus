@@ -68,7 +68,14 @@ pub fn read_file(path: &Path) -> Result<Entry, Error> {
             let name = path.parent().and_then(|p| p.file_name()).map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "OneNote".into());
             Ok(Entry::Group { name, entries: entries(notebook.entries()) })
         }
-        Some("one") => Ok(section(&parser.parse_section(typed).map_err(parse_err)?)),
+        Some("one") => {
+            // Named after the file, as the user sees it.
+            let mut entry = section(&parser.parse_section(typed).map_err(parse_err)?);
+            if let (Entry::Section { name, .. }, Some(stem)) = (&mut entry, path.file_stem()) {
+                *name = stem.to_string_lossy().into_owned();
+            }
+            Ok(entry)
+        }
         _ => Err(Error::NotOneNote),
     }
 }
