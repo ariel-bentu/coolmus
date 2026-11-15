@@ -1,16 +1,18 @@
-//! Local persistence: pages are files in ordinary folders.
+//! Local persistence: pages are PDF files in ordinary folders.
 //!
 //! ```text
-//! <root>/                       a folder you choose (e.g. inside OneDrive)
+//! <root>/                       any folder the user adds (several are allowed)
 //!   Work/
 //!     Bridges/
-//!       Plan.sketcher           one page: JSON with vector ink, text, pictures
-//!   Ideas.sketcher
+//!       Plan.pdf                one page: a normal PDF that carries its own
+//!                               editable page data (see `sketch-pdf`)
+//!   Manual.pdf                  any other PDF is listed too
 //! ```
-//! The folder tree *is* the organization: there is no index file, so any sync
-//! tool can copy the folder safely. The page name is the file name. Paths
-//! exchanged with callers are relative to the root and use `/` separators.
-//! Writes are atomic (temp file + rename) so a crash never corrupts a page.
+//! The folder tree *is* the organization: there is no index file, so Explorer,
+//! OneDrive or any sync tool can change the folders safely. The page name is
+//! the file name. Paths exchanged with callers are absolute, use `/`
+//! separators, and must lie inside one of the roots. Writes are atomic
+//! (temp file + rename) so a crash never corrupts a page.
 
 use std::collections::HashMap;
 use std::fs;
@@ -20,10 +22,11 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 use sketch_core::tags::Query;
-use sketch_core::{OneNotePageLink, Page};
+use sketch_core::Page;
+pub use sketch_pdf::Change;
 
 /// File extension of page files.
-pub const PAGE_EXT: &str = "sketcher";
+pub const PAGE_EXT: &str = "pdf";
 
 /// Hidden per-folder settings file. It lives inside the folder, so it moves,
 /// syncs and is deleted together with it.
@@ -50,14 +53,20 @@ struct FolderInfo {
 pub enum StoreError {
     #[error("I/O error at {path}: {source}")]
     Io { path: PathBuf, source: std::io::Error },
-    #[error("corrupt page {path}: {source}")]
-    Json { path: PathBuf, source: serde_json::Error },
-    /// A path from the caller that is absolute or leaves the root.
+    #[error("{path}: {source}")]
+    Pdf { path: PathBuf, source: sketch_pdf::Error },
+    /// A PDF without Sketcher page data.
+    #[error("notAPage")]
+    NotAPage,
+    /// A path from the caller that is not inside one of the roots.
     #[error("invalidPath")]
     InvalidPath,
     /// A name that is empty after removing characters files can't contain.
     #[error("invalidName")]
     InvalidName,
+    /// A folder can't be moved or copied into itself.
+    #[error("intoItself")]
+    IntoItself,
     #[error("could not move to the trash: {0}")]
     Trash(String),
 }
@@ -74,17 +83,15 @@ pub fn default_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("Sketcher"))
 }
 
-/// Where versions before the folder layout kept their library
-/// (`library.json` + `pages/`), for one-time migration.
-pub fn legacy_root() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "Sketcher").map(|d| d.data_dir().to_path_buf())
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NodeKind {
+    Root,
     Folder,
+    /// A PDF with Sketcher page data.
     Page,
+    /// Any other PDF.
+    Pdf,
 }
 
 /// One entry of the folder tree.
@@ -92,9 +99,9 @@ pub enum NodeKind {
 #[serde(rename_all = "camelCase")]
 pub struct Node {
     pub kind: NodeKind,
-    /// Display name: the folder name, or the page file name without extension.
+    /// Display name: the folder name, or the file name without extension.
     pub name: String,
-    /// Relative path, `/`-separated.
+    /// Absolute path, `/`-separated.
     pub path: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
@@ -103,6 +110,9 @@ pub struct Node {
     /// Calculated label (folders only).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<FolderLabel>,
+    /// A root that doesn't exist (e.g. an unplugged drive).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub missing: bool,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub children: Vec<Node>,
 }
@@ -110,33 +120,41 @@ pub struct Node {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hit {
+    pub kind: NodeKind,
     pub path: String,
     pub name: String,
-    /// Relative path of the containing folder ("" for the root).
+    /// Path of the containing folder.
     pub folder: String,
     pub tags: Vec<String>,
 }
 
-/// What the store remembers about a page file without keeping it loaded.
+/// A page as loaded, with what other programs changed since Sketcher saved it.
+#[derive(Debug)]
+pub struct Loaded {
+    pub page: Page,
+    pub changes: Vec<Change>,
+}
+
+/// What the store remembers about a PDF without keeping it loaded.
 #[derive(Debug, Clone)]
 struct Entry {
     stamp: (u64, u64),
+    is_page: bool,
     tags: Vec<String>,
-    onenote_page: Option<String>,
 }
 
-/// The few fields read when indexing; everything else in the file is skipped.
+/// The fields read when indexing; everything else in the page data is skipped.
 #[derive(Deserialize)]
 struct Header {
     #[serde(default)]
     tags: Vec<String>,
-    #[serde(default)]
-    onenote: Option<OneNotePageLink>,
 }
 
 pub struct Store {
-    root: PathBuf,
+    roots: Vec<PathBuf>,
     index: HashMap<String, Entry>,
+    /// Font for text in written PDFs (see [`sketch_pdf::system_font`]).
+    font: Vec<u8>,
 }
 
 fn io_err(path: &Path) -> impl FnOnce(std::io::Error) -> StoreError + '_ {
@@ -186,7 +204,7 @@ fn read_folder_info(dir: &Path) -> FolderInfo {
     fs::read(dir.join(FOLDER_INFO)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
-fn is_page_file(path: &Path) -> bool {
+fn is_pdf(path: &Path) -> bool {
     path.extension().is_some_and(|e| e.eq_ignore_ascii_case(PAGE_EXT))
 }
 
@@ -194,57 +212,88 @@ fn hidden(name: &str) -> bool {
     name.starts_with('.') || name.starts_with('~') || name.ends_with(".tmp")
 }
 
-fn parent_of(rel: &str) -> &str {
-    rel.rsplit_once('/').map(|(p, _)| p).unwrap_or("")
+/// The path as the UI sees it: absolute with `/` separators.
+pub fn api_path(path: &Path) -> String {
+    let s = path.to_string_lossy();
+    if cfg!(windows) { s.replace('\\', "/") } else { s.into_owned() }
 }
 
-fn join_rel(folder: &str, name: &str) -> String {
-    if folder.is_empty() { name.to_string() } else { format!("{folder}/{name}") }
+/// `name` without a trailing `.pdf`.
+fn stem_of(name: &str) -> &str {
+    match name.rsplit_once('.') {
+        Some((stem, ext)) if ext.eq_ignore_ascii_case(PAGE_EXT) => stem,
+        _ => name,
+    }
+}
+
+/// Copies a file or a whole folder.
+fn copy_all(from: &Path, to: &Path) -> Result<()> {
+    if from.is_dir() {
+        fs::create_dir(to).map_err(io_err(to))?;
+        for entry in fs::read_dir(from).map_err(io_err(from))?.flatten() {
+            copy_all(&entry.path(), &to.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        fs::copy(from, to).map(|_| ()).map_err(io_err(from))
+    }
+}
+
+fn index_entry(path: &Path, stamp: (u64, u64)) -> Entry {
+    let data = fs::read(path).ok().and_then(|b| sketch_pdf::page_data(&b).ok().flatten());
+    let header = data.and_then(|json| serde_json::from_slice::<Header>(&json).ok());
+    Entry { stamp, is_page: header.is_some(), tags: header.map(|h| h.tags).unwrap_or_default() }
+}
+
+fn stamp_of(meta: &fs::Metadata) -> (u64, u64) {
+    (meta.modified().map(millis).unwrap_or(0), meta.len())
 }
 
 impl Store {
-    /// Opens (creating if needed) the folder at `root`.
-    pub fn open(root: impl Into<PathBuf>) -> Result<Self> {
-        let root = root.into();
-        fs::create_dir_all(&root).map_err(io_err(&root))?;
-        Ok(Self { root, index: HashMap::new() })
+    pub fn new(roots: Vec<PathBuf>, font: Vec<u8>) -> Self {
+        Self { roots, index: HashMap::new(), font }
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn roots(&self) -> &[PathBuf] {
+        &self.roots
     }
 
-    /// Resolves a caller-supplied relative path, refusing anything that could
-    /// escape the root (`..`, absolute paths, drive prefixes).
-    fn resolve(&self, rel: &str) -> Result<PathBuf> {
-        let mut out = self.root.clone();
-        for part in rel.split('/').filter(|p| !p.is_empty()) {
-            let mut comps = Path::new(part).components();
-            match (comps.next(), comps.next()) {
-                (Some(Component::Normal(c)), None) if !part.contains('\\') => out.push(c),
-                _ => return Err(StoreError::InvalidPath),
-            }
+    pub fn set_roots(&mut self, roots: Vec<PathBuf>) {
+        self.roots = roots;
+        self.index.clear();
+    }
+
+    /// Resolves a caller-supplied path, refusing anything outside the roots
+    /// (relative paths, `..`, other folders).
+    fn resolve(&self, path: &str) -> Result<PathBuf> {
+        let p = PathBuf::from(path);
+        let plain = p.components().all(|c| !matches!(c, Component::ParentDir | Component::CurDir));
+        if !p.is_absolute() || !plain || !self.roots.iter().any(|r| p.starts_with(r)) {
+            return Err(StoreError::InvalidPath);
         }
-        Ok(out)
+        Ok(p)
     }
 
-    fn rel_of(&self, path: &Path) -> String {
-        let rel = path.strip_prefix(&self.root).unwrap_or(path);
-        rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/")
+    /// Like [`Store::resolve`], but not a root itself.
+    fn resolve_item(&self, path: &str) -> Result<PathBuf> {
+        let p = self.resolve(path)?;
+        if self.roots.contains(&p) {
+            return Err(StoreError::InvalidPath);
+        }
+        Ok(p)
     }
 
-    /// `folder/name.sketcher`, or `name (2).sketcher`… if that is taken.
-    fn unique(&self, folder: &str, name: &str, page: bool, except: Option<&Path>) -> Result<(PathBuf, String)> {
+    /// `dir/name`, or `name (2)`… if that is taken. `ext` is appended to the
+    /// name, `except` is the item being renamed.
+    fn unique(dir: &Path, name: &str, ext: &str, except: Option<&Path>) -> Result<PathBuf> {
         let name = sanitize_name(name)?;
-        let dir = self.resolve(folder)?;
         for n in 1.. {
             let candidate = if n == 1 { name.clone() } else { format!("{name} ({n})") };
-            let file = if page { format!("{candidate}.{PAGE_EXT}") } else { candidate };
-            let path = dir.join(&file);
+            let path = dir.join(format!("{candidate}{ext}"));
             // On case-insensitive disks a rename that only changes case "exists".
             let same = except.is_some_and(|e| e.to_string_lossy().to_lowercase() == path.to_string_lossy().to_lowercase());
             if same || !path.exists() {
-                return Ok((path, join_rel(folder, &file)));
+                return Ok(path);
             }
         }
         unreachable!()
@@ -252,11 +301,22 @@ impl Store {
 
     // ---------- tree & index ----------
 
-    /// Scans the folder tree, refreshing the tag index for files that changed.
+    /// Scans all roots, refreshing the index for PDFs that changed.
     pub fn tree(&mut self) -> Vec<Node> {
         let mut seen = Vec::new();
-        let root = self.root.clone();
-        let nodes = self.scan(&root, &mut seen);
+        let nodes = self
+            .roots
+            .clone()
+            .iter()
+            .map(|root| {
+                let name = root.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| api_path(root));
+                let modified = fs::metadata(root).and_then(|m| m.modified()).map(millis).unwrap_or(0);
+                let missing = !root.is_dir();
+                let label = read_folder_info(root).label;
+                let children = self.scan(root, &mut seen);
+                Node { kind: NodeKind::Root, name, path: api_path(root), tags: Vec::new(), modified, label, missing, children }
+            })
+            .collect();
         self.index.retain(|k, _| seen.contains(k));
         nodes
     }
@@ -264,7 +324,7 @@ impl Store {
     fn scan(&mut self, dir: &Path, seen: &mut Vec<String>) -> Vec<Node> {
         let Ok(read) = fs::read_dir(dir) else { return Vec::new() };
         let mut folders = Vec::new();
-        let mut pages = Vec::new();
+        let mut files = Vec::new();
         for entry in read.flatten() {
             let name = entry.file_name().to_string_lossy().to_string();
             if hidden(&name) {
@@ -273,29 +333,27 @@ impl Store {
             let path = entry.path();
             let Ok(meta) = entry.metadata() else { continue };
             let modified = meta.modified().map(millis).unwrap_or(0);
-            let rel = self.rel_of(&path);
+            let key = api_path(&path);
             if meta.is_dir() {
                 let children = self.scan(&path, seen);
                 let label = read_folder_info(&path).label;
-                folders.push(Node { kind: NodeKind::Folder, name, path: rel, tags: Vec::new(), modified, label, children });
-            } else if is_page_file(&path) {
-                let stamp = (modified, meta.len());
-                let fresh = self.index.get(&rel).is_some_and(|e| e.stamp == stamp);
-                if !fresh {
-                    let header = fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Header>(&b).ok());
-                    let (tags, onenote_page) = header.map(|h| (h.tags, h.onenote.map(|l| l.page_id))).unwrap_or_default();
-                    self.index.insert(rel.clone(), Entry { stamp, tags, onenote_page });
+                folders.push(Node { kind: NodeKind::Folder, name, path: key, tags: Vec::new(), modified, label, missing: false, children });
+            } else if is_pdf(&path) {
+                let stamp = stamp_of(&meta);
+                if !self.index.get(&key).is_some_and(|e| e.stamp == stamp) {
+                    self.index.insert(key.clone(), index_entry(&path, stamp));
                 }
-                let tags = self.index[&rel].tags.clone();
-                let stem = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
-                seen.push(rel.clone());
-                pages.push(Node { kind: NodeKind::Page, name: stem, path: rel, tags, modified, label: None, children: Vec::new() });
+                let e = &self.index[&key];
+                let kind = if e.is_page { NodeKind::Page } else { NodeKind::Pdf };
+                let node = Node { kind, name: stem_of(&name).to_string(), path: key.clone(), tags: e.tags.clone(), modified, label: None, missing: false, children: Vec::new() };
+                seen.push(key);
+                files.push(node);
             }
         }
         let by_name = |a: &Node, b: &Node| a.name.to_lowercase().cmp(&b.name.to_lowercase());
         folders.sort_by(by_name);
-        pages.sort_by(by_name);
-        folders.extend(pages);
+        files.sort_by(by_name);
+        folders.extend(files);
         folders
     }
 
@@ -314,18 +372,19 @@ impl Store {
         tags
     }
 
-    /// Pages matching a query such as `"#work bridge"`, most recently modified first.
+    /// PDFs matching a query such as `"#work bridge"`, most recently modified first.
     pub fn search(&mut self, query: &str) -> Vec<Hit> {
         self.ensure_index();
         let q = Query::parse(query);
         let mut hits: Vec<(u64, Hit)> = self
             .index
             .iter()
-            .filter_map(|(rel, e)| {
-                let file = rel.rsplit('/').next().unwrap_or(rel);
-                let name = file.strip_suffix(&format!(".{PAGE_EXT}")).unwrap_or(file).to_string();
+            .filter_map(|(key, e)| {
+                let (folder, file) = key.rsplit_once('/').unwrap_or(("", key));
+                let name = stem_of(file).to_string();
                 q.matches(&name, &e.tags).then(|| {
-                    (e.stamp.0, Hit { path: rel.clone(), name, folder: parent_of(rel).to_string(), tags: e.tags.clone() })
+                    let kind = if e.is_page { NodeKind::Page } else { NodeKind::Pdf };
+                    (e.stamp.0, Hit { kind, path: key.clone(), name, folder: folder.to_string(), tags: e.tags.clone() })
                 })
             })
             .collect();
@@ -333,66 +392,79 @@ impl Store {
         hits.into_iter().map(|h| h.1).collect()
     }
 
-    /// A page directly inside `folder` that was imported from this OneNote page.
-    pub fn find_imported(&mut self, folder: &str, onenote_page: &str) -> Option<String> {
+    /// Sketcher pages directly inside `folder`, in tree order.
+    pub fn pages_in(&mut self, folder: &str) -> Result<Vec<String>> {
+        let dir = self.resolve(folder)?;
+        let prefix = format!("{}/", api_path(&dir));
         self.ensure_index();
-        self.index
+        let mut pages: Vec<String> = self
+            .index
             .iter()
-            .find(|(rel, e)| parent_of(rel) == folder && e.onenote_page.as_deref() == Some(onenote_page))
-            .map(|(rel, _)| rel.clone())
+            .filter(|(k, e)| e.is_page && k.strip_prefix(&prefix).is_some_and(|rest| !rest.contains('/')))
+            .map(|(k, _)| k.clone())
+            .collect();
+        pages.sort_by_key(|k| k.to_lowercase());
+        Ok(pages)
     }
 
     // ---------- pages ----------
 
-    pub fn load_page(&self, rel: &str) -> Result<Page> {
-        let path = self.resolve(rel)?;
-        let bytes = fs::read(&path).map_err(io_err(&path))?;
-        let mut page: Page =
-            serde_json::from_slice(&bytes).map_err(|source| StoreError::Json { path: path.clone(), source })?;
-        page.title = path.file_stem().unwrap_or_default().to_string_lossy().to_string();
-        Ok(page)
+    pub fn load_page(&self, path: &str) -> Result<Loaded> {
+        let file = self.resolve(path)?;
+        let bytes = fs::read(&file).map_err(io_err(&file))?;
+        let opened = sketch_pdf::read(&bytes).map_err(|source| StoreError::Pdf { path: file.clone(), source })?;
+        let (mut page, changes) = match opened {
+            sketch_pdf::Opened::Intact(page) => (page, Vec::new()),
+            sketch_pdf::Opened::Changed { page, changes } => (page, changes),
+            sketch_pdf::Opened::Foreign => return Err(StoreError::NotAPage),
+        };
+        page.title = stem_of(&file.file_name().unwrap_or_default().to_string_lossy()).to_string();
+        Ok(Loaded { page, changes })
+    }
+
+    fn write_page(&mut self, file: &Path, page: &Page) -> Result<()> {
+        let bytes = sketch_pdf::write(page, &self.font).map_err(|source| StoreError::Pdf { path: file.to_path_buf(), source })?;
+        write_atomic(file, &bytes)?;
+        let stamp = fs::metadata(file).map(|m| stamp_of(&m)).unwrap_or_default();
+        self.index.insert(api_path(file), Entry { stamp, is_page: true, tags: page.tags.clone() });
+        Ok(())
     }
 
     /// Overwrites an existing page file (the name in `page.title` is ignored;
     /// use [`Store::rename`] to change it).
-    pub fn save_page(&mut self, rel: &str, page: &Page) -> Result<()> {
-        let path = self.resolve(rel)?;
-        if !is_page_file(&path) {
+    pub fn save_page(&mut self, path: &str, page: &Page) -> Result<()> {
+        let file = self.resolve_item(path)?;
+        if !is_pdf(&file) {
             return Err(StoreError::InvalidPath);
         }
-        let bytes = serde_json::to_vec(page).expect("page serializes");
-        write_atomic(&path, &bytes)?;
-        self.note_saved(rel, &path, page);
-        Ok(())
-    }
-
-    fn note_saved(&mut self, rel: &str, path: &Path, page: &Page) {
-        let stamp = fs::metadata(path).map(|m| (m.modified().map(millis).unwrap_or(0), m.len())).unwrap_or_default();
-        let onenote_page = page.onenote.as_ref().map(|l| l.page_id.clone());
-        self.index.insert(rel.to_string(), Entry { stamp, tags: page.tags.clone(), onenote_page });
+        self.write_page(&file, page)
     }
 
     /// Writes `page` as a new file named after `page.title` inside `folder`.
-    /// Returns its relative path.
+    /// Returns its path.
     pub fn create_page(&mut self, folder: &str, page: &Page) -> Result<String> {
-        let (path, rel) = self.unique(folder, &page.title, true, None)?;
-        let bytes = serde_json::to_vec(page).expect("page serializes");
-        write_atomic(&path, &bytes)?;
-        self.note_saved(&rel, &path, page);
-        Ok(rel)
+        let file = Self::unique(&self.resolve(folder)?, &page.title, ".pdf", None)?;
+        self.write_page(&file, page)?;
+        Ok(api_path(&file))
+    }
+
+    /// One printable PDF of the given pages, in order.
+    pub fn print(&self, paths: &[String], title: &str) -> Result<Vec<u8>> {
+        let pages = paths.iter().map(|p| self.load_page(p).map(|l| l.page)).collect::<Result<Vec<_>>>()?;
+        sketch_pdf::print(&pages, title, &self.font).map_err(|source| StoreError::Pdf { path: PathBuf::from(title), source })
     }
 
     // ---------- folders & files ----------
 
     pub fn create_folder(&mut self, parent: &str, name: &str) -> Result<String> {
-        let (path, rel) = self.unique(parent, name, false, None)?;
-        fs::create_dir_all(&path).map_err(io_err(&path))?;
-        Ok(rel)
+        let dir = Self::unique(&self.resolve(parent)?, name, "", None)?;
+        fs::create_dir_all(&dir).map_err(io_err(&dir))?;
+        Ok(api_path(&dir))
     }
 
     /// Sets or clears a folder's calculated label.
-    pub fn set_folder_label(&mut self, rel: &str, label: Option<FolderLabel>) -> Result<()> {
-        let dir = self.resolve(rel)?;
+    pub fn set_folder_label(&mut self, path: &str, label: Option<FolderLabel>) -> Result<()> {
+        let dir = self.resolve(path)?;
         if !dir.is_dir() {
             return Err(StoreError::InvalidPath);
         }
@@ -408,104 +480,101 @@ impl Store {
         write_atomic(&file, &serde_json::to_vec_pretty(&info).expect("folder info serializes"))
     }
 
-    fn move_path(&mut self, from_rel: &str, to: &Path, to_rel: &str) -> Result<String> {
-        let from = self.resolve(from_rel)?;
-        if from == self.root {
-            return Err(StoreError::InvalidPath);
+    /// Re-keys index entries at or below `from` after a move.
+    fn reindex(&mut self, from: &Path, to: &Path) {
+        let (from, to) = (api_path(from), api_path(to));
+        let moved: Vec<String> =
+            self.index.keys().filter(|k| **k == from || k.starts_with(&format!("{from}/"))).cloned().collect();
+        for k in moved {
+            let e = self.index.remove(&k).expect("key exists");
+            self.index.insert(format!("{to}{}", &k[from.len()..]), e);
         }
-        if from != *to {
-            fs::rename(&from, to).map_err(io_err(&from))?;
-        }
-        // Re-key index entries under the old path.
-        let moved: Vec<(String, Entry)> = self
-            .index
-            .iter()
-            .filter(|(k, _)| *k == from_rel || k.starts_with(&format!("{from_rel}/")))
-            .map(|(k, e)| (k.clone(), e.clone()))
-            .collect();
-        for (k, e) in moved {
-            self.index.remove(&k);
-            self.index.insert(format!("{to_rel}{}", &k[from_rel.len()..]), e);
-        }
-        Ok(to_rel.to_string())
     }
 
-    /// Renames a page (give the name without extension) or a folder. Returns the new path.
-    pub fn rename(&mut self, rel: &str, new_name: &str) -> Result<String> {
-        let from = self.resolve(rel)?;
-        let page = is_page_file(&from) && from.is_file();
-        let (to, to_rel) = self.unique(parent_of(rel), new_name, page, Some(&from))?;
-        self.move_path(rel, &to, &to_rel)
+    fn move_path(&mut self, from: &Path, to: &Path) -> Result<String> {
+        if from != to {
+            if fs::rename(from, to).is_err() {
+                // Another drive: copy, then remove the original.
+                copy_all(from, to)?;
+                let removed = if from.is_dir() { fs::remove_dir_all(from) } else { fs::remove_file(from) };
+                removed.map_err(io_err(from))?;
+            }
+            self.reindex(from, to);
+        }
+        Ok(api_path(to))
     }
 
-    /// Moves a page or folder into `folder` ("" = the root). Returns the new path.
-    pub fn move_into(&mut self, rel: &str, folder: &str) -> Result<String> {
-        if folder == rel || folder.starts_with(&format!("{rel}/")) {
-            return Err(StoreError::InvalidPath); // a folder can't go inside itself
+    /// Splits a file or folder name into (name to keep unique, extension).
+    fn name_parts(path: &Path) -> Result<(String, String)> {
+        let name = path.file_name().ok_or(StoreError::InvalidPath)?.to_string_lossy().to_string();
+        if path.is_dir() {
+            return Ok((name, String::new()));
         }
-        if parent_of(rel) == folder {
-            return Ok(rel.to_string());
-        }
-        let from = self.resolve(rel)?;
-        let page = is_page_file(&from) && from.is_file();
-        let name = from.file_name().ok_or(StoreError::InvalidPath)?.to_string_lossy().to_string();
-        let name = if page { name.strip_suffix(&format!(".{PAGE_EXT}")).unwrap_or(&name).to_string() } else { name };
-        let (to, to_rel) = self.unique(folder, &name, page, None)?;
-        self.move_path(rel, &to, &to_rel)
+        Ok(match name.rsplit_once('.') {
+            Some((stem, ext)) if !stem.is_empty() => (stem.to_string(), format!(".{ext}")),
+            _ => (name, String::new()),
+        })
     }
 
-    /// Moves a page or folder to the system trash (Recycle Bin), never deleting outright.
-    pub fn delete(&mut self, rel: &str) -> Result<()> {
-        let path = self.resolve(rel)?;
-        if path == self.root {
-            return Err(StoreError::InvalidPath);
+    /// Renames a page or folder (give a page's name without extension).
+    /// Returns the new path.
+    pub fn rename(&mut self, path: &str, new_name: &str) -> Result<String> {
+        let from = self.resolve_item(path)?;
+        let (_, ext) = Self::name_parts(&from)?;
+        let to = Self::unique(from.parent().ok_or(StoreError::InvalidPath)?, new_name, &ext, Some(&from))?;
+        self.move_path(&from, &to)
+    }
+
+    /// Moves a file or folder into `folder`, which may be in another root.
+    /// Returns the new path.
+    pub fn move_into(&mut self, path: &str, folder: &str) -> Result<String> {
+        let from = self.resolve_item(path)?;
+        let dir = self.resolve(folder)?;
+        if dir.starts_with(&from) {
+            return Err(StoreError::IntoItself);
         }
-        trash::delete(&path).map_err(|e| StoreError::Trash(e.to_string()))?;
-        self.index.retain(|k, _| k != rel && !k.starts_with(&format!("{rel}/")));
+        if from.parent() == Some(dir.as_path()) {
+            return Ok(api_path(&from));
+        }
+        let (name, ext) = Self::name_parts(&from)?;
+        let to = Self::unique(&dir, &name, &ext, None)?;
+        self.move_path(&from, &to)
+    }
+
+    /// Copies files or folders (from anywhere, e.g. pasted from Explorer) into
+    /// `folder`; a name already taken gets " (2)". Returns the new paths.
+    pub fn copy_into(&mut self, sources: &[PathBuf], folder: &str) -> Result<Vec<String>> {
+        let dir = self.resolve(folder)?;
+        let mut out = Vec::new();
+        for from in sources {
+            if !from.exists() {
+                return Err(io_err(from)(std::io::ErrorKind::NotFound.into()));
+            }
+            if dir.starts_with(from) {
+                return Err(StoreError::IntoItself);
+            }
+            let (name, ext) = Self::name_parts(from)?;
+            let to = Self::unique(&dir, &name, &ext, None)?;
+            copy_all(from, &to)?;
+            out.push(api_path(&to));
+        }
+        Ok(out)
+    }
+
+    /// Moves a file or folder to the system trash (Recycle Bin), never deleting outright.
+    pub fn delete(&mut self, path: &str) -> Result<()> {
+        let file = self.resolve_item(path)?;
+        trash::delete(&file).map_err(|e| StoreError::Trash(e.to_string()))?;
+        let key = api_path(&file);
+        self.index.retain(|k, _| *k != key && !k.starts_with(&format!("{key}/")));
         Ok(())
     }
 
-    // ---------- migration ----------
-
-    /// Copies a library from versions before the folder layout
-    /// (`library.json`: notebooks → sections → pages) into folders:
-    /// notebook → folder, section → subfolder, page → file. The old
-    /// `library.json` is renamed so this happens only once. Returns the
-    /// number of pages copied.
-    pub fn migrate_legacy(&mut self, old_root: &Path) -> Result<usize> {
-        let lib_path = old_root.join("library.json");
-        if !lib_path.is_file() || old_root == self.root {
-            return Ok(0);
-        }
-        let bytes = fs::read(&lib_path).map_err(io_err(&lib_path))?;
-        let lib: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|source| StoreError::Json { path: lib_path.clone(), source })?;
-        let text = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-        let list = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_array()).cloned().unwrap_or_default();
-        let mut copied = 0;
-        for nb in list(&lib, "notebooks") {
-            let nb_rel = self.create_folder("", &text(&nb, "name")).or_else(|_| self.create_folder("", "Notebook"))?;
-            for sec in list(&nb, "sections") {
-                let sec_rel =
-                    self.create_folder(&nb_rel, &text(&sec, "name")).or_else(|_| self.create_folder(&nb_rel, "Section"))?;
-                for meta in list(&sec, "pages") {
-                    let file = old_root.join("pages").join(format!("{}.json", text(&meta, "id")));
-                    let Some(mut page) = fs::read(&file).ok().and_then(|b| serde_json::from_slice::<Page>(&b).ok()) else {
-                        continue;
-                    };
-                    page.title = text(&meta, "title");
-                    if sanitize_name(&page.title).is_err() {
-                        page.title = "Page".into();
-                    }
-                    page.move_ink_onto_page();
-                    self.create_page(&sec_rel, &page)?;
-                    copied += 1;
-                }
-            }
-        }
-        let done = old_root.join("library.json.migrated");
-        fs::rename(&lib_path, &done).map_err(io_err(&lib_path))?;
-        Ok(copied)
+    /// The filesystem path for `path` if it is inside a root (for opening it
+    /// in another program).
+    pub fn native(&self, path: &str) -> Result<PathBuf> {
+        // Normalizes separators to the platform's own.
+        Ok(self.resolve(path)?.components().collect())
     }
 }
 
@@ -515,73 +584,129 @@ mod tests {
 
     fn temp_dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("sketcher-test-{name}-{}", sketch_core::new_id()));
-        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
         d
     }
 
-    fn names(nodes: &[Node]) -> Vec<String> {
-        nodes.iter().map(|n| n.path.clone()).collect()
+    fn store(roots: &[&Path]) -> Store {
+        Store::new(roots.iter().map(|r| r.to_path_buf()).collect(), Vec::new())
+    }
+
+    fn names(nodes: &[Node]) -> Vec<&str> {
+        nodes.iter().map(|n| n.name.as_str()).collect()
     }
 
     #[test]
     fn folders_pages_rename_move_and_search() {
         let dir = temp_dir("tree");
-        let mut store = Store::open(&dir).unwrap();
-        let work = store.create_folder("", "Work").unwrap();
+        let root = api_path(&dir);
+        let mut store = store(&[&dir]);
+        let work = store.create_folder(&root, "Work").unwrap();
         let mut page = Page::new("גשר / Bridge");
         page.tags = vec!["work".into()];
-        let rel = store.create_page(&work, &page).unwrap();
-        assert_eq!(rel, "Work/גשר - Bridge.sketcher");
-        assert_eq!(store.create_page(&work, &page).unwrap(), "Work/גשר - Bridge (2).sketcher");
+        let path = store.create_page(&work, &page).unwrap();
+        assert_eq!(path, format!("{root}/Work/גשר - Bridge.pdf"));
+        assert_eq!(store.create_page(&work, &page).unwrap(), format!("{root}/Work/גשר - Bridge (2).pdf"));
 
-        let loaded = store.load_page(&rel).unwrap();
-        assert_eq!(loaded.title, "גשר - Bridge");
+        let loaded = store.load_page(&path).unwrap();
+        assert_eq!((loaded.page.title.as_str(), loaded.changes.len()), ("גשר - Bridge", 0));
         assert_eq!(store.search("#work").len(), 2);
         assert_eq!(store.search("bridge #work").len(), 2);
 
-        let renamed = store.rename(&rel, "Plan").unwrap();
-        assert_eq!(renamed, "Work/Plan.sketcher");
-        let moved = store.move_into(&renamed, "").unwrap();
-        assert_eq!(moved, "Plan.sketcher");
-        assert_eq!(store.search("plan")[0].path, "Plan.sketcher");
+        let renamed = store.rename(&path, "Plan").unwrap();
+        assert_eq!(renamed, format!("{work}/Plan.pdf"));
+        let moved = store.move_into(&renamed, &root).unwrap();
+        assert_eq!(moved, format!("{root}/Plan.pdf"));
+        assert_eq!(store.search("plan")[0].path, moved);
 
         let folder = store.rename(&work, "Job").unwrap();
         let tree = store.tree();
-        assert_eq!(names(&tree), vec!["Job", "Plan.sketcher"]);
-        assert_eq!(names(&tree[0].children), vec!["Job/גשר - Bridge (2).sketcher"]);
+        assert_eq!((tree.len(), tree[0].kind), (1, NodeKind::Root));
+        assert_eq!(names(&tree[0].children), vec!["Job", "Plan"]);
+        assert_eq!(tree[0].children[1].kind, NodeKind::Page);
+        assert_eq!(names(&tree[0].children[0].children), vec!["גשר - Bridge (2)"]);
         // A folder can't be moved into itself or its own subfolder.
         let sub = store.create_folder(&folder, "Sub").unwrap();
-        assert!(store.move_into(&folder, &folder).is_err());
-        assert!(store.move_into(&folder, &sub).is_err());
+        assert!(matches!(store.move_into(&folder, &folder), Err(StoreError::IntoItself)));
+        assert!(matches!(store.move_into(&folder, &sub), Err(StoreError::IntoItself)));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn several_roots_with_moves_and_copies_between_them() {
+        let (a, b, outside) = (temp_dir("a"), temp_dir("b"), temp_dir("outside"));
+        let mut store = store(&[&a, &b]);
+        let page = store.create_page(&api_path(&a), &Page::new("p")).unwrap();
+        let folder = store.create_folder(&api_path(&a), "f").unwrap();
+
+        let moved = store.move_into(&folder, &api_path(&b)).unwrap();
+        assert_eq!(moved, api_path(&b.join("f")));
+        // Copies of the same item get distinct names.
+        let copies = store.copy_into(&[a.join("p.pdf"), a.join("p.pdf")], &moved).unwrap();
+        assert_eq!(copies, vec![api_path(&b.join("f/p.pdf")), api_path(&b.join("f/p (2).pdf"))]);
+        assert!(store.load_page(&copies[1]).is_ok());
+
+        // Files from outside the roots can be copied in, e.g. pasted from Explorer.
+        fs::write(outside.join("notes.txt"), "x").unwrap();
+        assert_eq!(store.copy_into(&[outside.join("notes.txt")], &api_path(&a)).unwrap(), vec![api_path(&a.join("notes.txt"))]);
+        // …but nothing outside the roots can be changed.
+        let foreign = api_path(&outside.join("notes.txt"));
+        assert!(matches!(store.rename(&foreign, "x"), Err(StoreError::InvalidPath)));
+        assert!(matches!(store.move_into(&page, &api_path(&outside)), Err(StoreError::InvalidPath)));
+        assert!(matches!(store.delete(&api_path(&a)), Err(StoreError::InvalidPath)), "a root itself");
+
+        let tree = store.tree();
+        assert_eq!(names(&tree), vec![a.file_name().unwrap().to_str().unwrap(), b.file_name().unwrap().to_str().unwrap()]);
+        assert_eq!(names(&tree[1].children[0].children), vec!["p", "p (2)"]);
+        for d in [a, b, outside] {
+            fs::remove_dir_all(d).unwrap();
+        }
+    }
+
+    #[test]
+    fn other_pdfs_are_listed_but_are_not_pages() {
+        let dir = temp_dir("pdfs");
+        let mut doc = lopdf::Document::with_version("1.5");
+        let pages = doc.new_object_id();
+        let page = doc.add_object(lopdf::dictionary! { "Type" => "Page", "Parent" => pages, "MediaBox" => vec![0.into(), 0.into(), 10.into(), 10.into()] });
+        doc.objects.insert(pages, lopdf::Object::Dictionary(lopdf::dictionary! { "Type" => "Pages", "Kids" => vec![page.into()], "Count" => 1 }));
+        let catalog = doc.add_object(lopdf::dictionary! { "Type" => "Catalog", "Pages" => pages });
+        doc.trailer.set("Root", catalog);
+        doc.save(dir.join("Manual.PDF")).unwrap();
+
+        let mut store = store(&[&dir]);
+        let tree = store.tree();
+        assert_eq!((tree[0].children[0].name.as_str(), tree[0].children[0].kind), ("Manual", NodeKind::Pdf));
+        assert!(matches!(store.load_page(&tree[0].children[0].path), Err(StoreError::NotAPage)));
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
     fn folder_label_is_stored_in_the_folder_and_travels_with_it() {
         let dir = temp_dir("label");
-        let mut store = Store::open(&dir).unwrap();
-        let class = store.create_folder("", "class of 2021").unwrap();
+        let mut store = store(&[&dir]);
+        let class = store.create_folder(&api_path(&dir), "class of 2021").unwrap();
         let label = FolderLabel::SchoolGrade { first_grade_year: 2024, class_number: "3".into(), template: "כיתה {grade}-{n}".into() };
         store.set_folder_label(&class, Some(label.clone())).unwrap();
         let moved = store.rename(&class, "class of 2021 born").unwrap();
-        let tree = store.tree();
+        let tree = &store.tree()[0].children;
         assert_eq!(tree.len(), 1, "the settings file is hidden");
         assert_eq!((tree[0].path.as_str(), tree[0].label.as_ref()), (moved.as_str(), Some(&label)));
         store.set_folder_label(&moved, None).unwrap();
-        assert_eq!(store.tree()[0].label, None);
-        assert!(!dir.join(&moved).join(FOLDER_INFO).exists());
+        assert_eq!(store.tree()[0].children[0].label, None);
+        assert!(!PathBuf::from(&moved).join(FOLDER_INFO).exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn paths_cannot_escape_the_root() {
+    fn paths_must_stay_inside_a_root() {
         let dir = temp_dir("escape");
-        let store = Store::open(&dir).unwrap();
-        for bad in ["../x.sketcher", "a/../../x.sketcher", "C:\\x.sketcher", "a\\..\\..\\x", "./x"] {
-            assert!(store.resolve(bad).is_err(), "{bad}");
+        let store = store(&[&dir]);
+        let root = api_path(&dir);
+        for bad in [format!("{root}/../x.pdf"), format!("{root}/a/../../x.pdf"), "x.pdf".into(), api_path(&std::env::temp_dir())] {
+            assert!(store.resolve(&bad).is_err(), "{bad}");
         }
-        // A leading slash is still relative to the root.
-        assert!(store.resolve("/etc/passwd").unwrap().starts_with(&dir));
+        assert!(store.resolve(&format!("{root}/a/b.pdf")).is_ok());
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -594,25 +719,5 @@ mod tests {
         assert!(sanitize_name(" / ").is_ok());
         assert!(sanitize_name("   ").is_err());
         assert!(sanitize_name("..").is_err());
-    }
-
-    #[test]
-    fn legacy_library_is_migrated_once() {
-        let old = temp_dir("legacy");
-        fs::create_dir_all(old.join("pages")).unwrap();
-        let page = Page::new("x");
-        fs::write(old.join("pages").join(format!("{}.json", page.id)), serde_json::to_vec(&page).unwrap()).unwrap();
-        let lib = serde_json::json!({ "notebooks": [{ "id": "n", "name": "מחברת", "sections": [
-            { "id": "s", "name": "Quick Notes", "pages": [{ "id": page.id, "title": "First page", "tags": [] }] }
-        ]}]});
-        fs::write(old.join("library.json"), lib.to_string()).unwrap();
-
-        let dir = temp_dir("migrated");
-        let mut store = Store::open(&dir).unwrap();
-        assert_eq!(store.migrate_legacy(&old).unwrap(), 1);
-        assert!(store.load_page("מחברת/Quick Notes/First page.sketcher").is_ok());
-        assert_eq!(store.migrate_legacy(&old).unwrap(), 0);
-        fs::remove_dir_all(&dir).unwrap();
-        fs::remove_dir_all(&old).unwrap();
     }
 }

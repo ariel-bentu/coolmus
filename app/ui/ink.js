@@ -1,6 +1,6 @@
 // Stroke geometry for the screen. Mirrors crates/sketch-render (tessellate.rs,
 // paper.rs) and sketch-core (Pen::width_at, effective_color, hit testing) so
-// what you see matches PNG export and OneNote output.
+// what you see matches the PDF and PNG export.
 
 export const PAPER_COLOR = '#fdfdfb';
 const RULE_COLOR = '#c9d8ea';
@@ -8,6 +8,19 @@ const MARGIN_COLOR = '#f0b4b4';
 const RULE_SPACING = 32;
 const GRID_SPACING = 24;
 export const DEFAULT_PAGE = { width: 794, height: 1123 };
+/** Space between stacked sheets (sketch-core SHEET_GAP). */
+export const SHEET_GAP = 24;
+
+/** Top edge of sheet `i`; each sheet is page.width × page.height. */
+export const sheetTop = (page, i) => i * (page.height + SHEET_GAP);
+export const sheetCount = (page) => Math.max(1, page.sheets ?? 1);
+/** Height of all sheets with the gaps between them. */
+export const totalHeight = (page) => sheetTop(page, sheetCount(page)) - SHEET_GAP;
+/** The sheets as { x, y, w, h } rectangles in page units. */
+export const sheetRects = (page) =>
+  Array.from({ length: sheetCount(page) }, (_, i) => ({ x: 0, y: sheetTop(page, i), w: page.width, h: page.height }));
+/** True if (x, y) is on one of the sheets. */
+export const onSheet = (page, x, y) => sheetRects(page).some((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
 
 export function widthAt(pen, pressure) {
   if (!pen.pressure_sensitive || pen.style === 'Highlighter') return pen.width;
@@ -179,13 +192,23 @@ export class Smoother {
   }
 }
 
-/** Draws the paper pattern for the visible region (page coordinates). */
-export function drawPaper(ctx, page, view, zoom, endless = false) {
+/** Draws the paper pattern of every visible sheet (view in page coordinates). */
+export function drawPaper(ctx, page, view, zoom) {
+  for (const r of sheetRects(page)) {
+    if (r.y > view.maxY || r.y + r.h < view.minY) continue;
+    ctx.save();
+    ctx.translate(0, r.y);
+    sheetPaper(ctx, page, { ...view, minY: view.minY - r.y, maxY: view.maxY - r.y }, zoom);
+    ctx.restore();
+  }
+}
+
+/** The paper pattern of one sheet, in sheet coordinates. */
+function sheetPaper(ctx, page, view, zoom) {
   const lw = Math.max(0.5, 1) / zoom;
   const { minX, minY, maxX, maxY } = view;
-  // In endless mode the pattern continues past the page edges to fill the view.
-  const W = endless ? Math.max(page.width, maxX) : page.width;
-  const H = endless ? Math.max(page.height, maxY) : page.height;
+  const W = page.width;
+  const H = page.height;
   ctx.lineWidth = lw;
   if (page.paper === 'Lined') {
     ctx.strokeStyle = RULE_COLOR;

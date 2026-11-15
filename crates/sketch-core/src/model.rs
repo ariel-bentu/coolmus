@@ -177,18 +177,6 @@ impl Paper {
     }
 }
 
-/// Where a page lives in OneNote, if it was imported from or pushed to it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OneNotePageLink {
-    pub page_id: String,
-    pub section_id: String,
-    /// `lastModifiedDateTime` reported by OneNote at the last sync.
-    pub last_modified: Option<String>,
-    /// True if the page was written by Sketcher (has our image + data attachment),
-    /// so it can be updated in place instead of re-created.
-    pub owned_by_sketcher: bool,
-}
-
 /// Identifies a page file and its layout version.
 pub const PAGE_FORMAT: &str = "sketcher/page";
 pub const PAGE_VERSION: u32 = 2;
@@ -242,7 +230,12 @@ impl ImageItem {
     }
 }
 
-/// A single sheet of paper: vector ink, text boxes and pictures.
+/// A page file: one or more sheets of paper with vector ink, text boxes and
+/// pictures.
+///
+/// The sheets are `width` × `height` each, stacked top to bottom with
+/// [`SHEET_GAP`] between them, and all content shares that one coordinate
+/// space: sheet `i` spans `sheet_top(i) ..= sheet_top(i) + height`.
 ///
 /// Stored as one JSON file. The page's name is its file name, so `title` is
 /// filled in when the file is loaded and never written into the file.
@@ -260,8 +253,11 @@ pub struct Page {
     pub tags: Vec<String>,
     #[serde(default)]
     pub paper: Paper,
+    /// Size of one sheet.
     pub width: f32,
     pub height: f32,
+    #[serde(default = "one")]
+    pub sheets: u32,
     #[serde(default)]
     pub strokes: Vec<Stroke>,
     #[serde(default)]
@@ -270,13 +266,17 @@ pub struct Page {
     pub images: Vec<ImageItem>,
     pub created: u64,
     pub modified: u64,
-    /// The OneNote page this page was imported from, if any.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub onenote: Option<OneNotePageLink>,
 }
 
 /// A4 at 96 DPI.
 pub const DEFAULT_PAGE_SIZE: (f32, f32) = (794.0, 1123.0);
+
+/// Space between stacked sheets, in page units.
+pub const SHEET_GAP: f32 = 24.0;
+
+fn one() -> u32 {
+    1
+}
 
 impl Page {
     pub fn new(title: impl Into<String>) -> Self {
@@ -290,12 +290,12 @@ impl Page {
             paper: Paper::default(),
             width: DEFAULT_PAGE_SIZE.0,
             height: DEFAULT_PAGE_SIZE.1,
+            sheets: 1,
             strokes: Vec::new(),
             texts: Vec::new(),
             images: Vec::new(),
             created: now,
             modified: now,
-            onenote: None,
         }
     }
 
@@ -303,56 +303,19 @@ impl Page {
         self.modified = now_millis();
     }
 
+    /// Top edge of sheet `i`.
+    pub fn sheet_top(&self, i: u32) -> f32 {
+        i as f32 * (self.height + SHEET_GAP)
+    }
+
+    /// Height of all sheets with the gaps between them.
+    pub fn total_height(&self) -> f32 {
+        self.sheet_top(self.sheets.max(1)) - SHEET_GAP
+    }
+
     /// Bounds of all ink (empty rect if none).
     pub fn ink_bounds(&self) -> Rect {
         self.strokes.iter().fold(Rect::EMPTY, |acc, s| acc.union(&s.bounds()))
-    }
-
-    /// Bounds of everything on the page: ink, text and pictures.
-    pub fn content_bounds(&self) -> Rect {
-        let texts = self.texts.iter().map(TextBox::bounds);
-        let images = self.images.iter().map(ImageItem::bounds);
-        texts.chain(images).fold(self.ink_bounds(), |acc, r| acc.union(&r))
-    }
-
-    /// Moves content that lies above or left of the page (negative coordinates)
-    /// onto it, keeping its layout, then grows the page to fit. OneNote stores
-    /// right-to-left pages' ink at negative X. Returns true if anything moved.
-    pub fn move_ink_onto_page(&mut self) -> bool {
-        const MARGIN: f32 = 40.0;
-        let points = self.strokes.iter().flat_map(|s| &s.points).map(|p| (p.x, p.y));
-        let corners = self.texts.iter().map(|t| (t.x, t.y)).chain(self.images.iter().map(|i| (i.x, i.y)));
-        let (min_x, min_y) = points.chain(corners).fold((0.0f32, 0.0f32), |(x, y), (px, py)| (x.min(px), y.min(py)));
-        let dx = if min_x < 0.0 { MARGIN - min_x } else { 0.0 };
-        let dy = if min_y < 0.0 { MARGIN - min_y } else { 0.0 };
-        if dx == 0.0 && dy == 0.0 {
-            return false;
-        }
-        for s in &mut self.strokes {
-            for p in &mut s.points {
-                p.x += dx;
-                p.y += dy;
-            }
-        }
-        for t in &mut self.texts {
-            t.x += dx;
-            t.y += dy;
-        }
-        for i in &mut self.images {
-            i.x += dx;
-            i.y += dy;
-        }
-        self.fit_to_ink();
-        true
-    }
-
-    /// Grows the page so all content fits, keeping a margin.
-    pub fn fit_to_ink(&mut self) {
-        let b = self.content_bounds();
-        if !b.is_empty() {
-            self.width = self.width.max(b.max_x + 40.0);
-            self.height = self.height.max(b.max_y + 40.0);
-        }
     }
 
     /// Indices of strokes hit at (x, y).
@@ -368,22 +331,6 @@ impl Page {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn ink_left_of_the_page_is_moved_onto_it() {
-        let mut page = Page::new("rtl");
-        let mut s = Stroke::new(Pen::default());
-        s.points = vec![Point::new(-1000.0, 50.0, 0.5), Point::new(-10.0, 60.0, 0.5)];
-        page.strokes.push(s);
-        assert!(page.move_ink_onto_page());
-        let p = &page.strokes[0].points;
-        assert_eq!((p[0].x, p[0].y, p[1].x), (40.0, 50.0, 1030.0));
-        assert!(page.width >= 1030.0);
-        // Ink already on the page, even touching its edge, stays put.
-        assert!(!page.move_ink_onto_page());
-        page.strokes[0].points[0].x = 0.0;
-        assert!(!page.move_ink_onto_page());
-    }
-
     use super::*;
 
     #[test]
@@ -415,12 +362,5 @@ mod tests {
         assert_eq!(back.texts, page.texts);
         assert_eq!(back.images, page.images);
         assert_eq!(back.title, "");
-    }
-
-    #[test]
-    fn version_1_pages_still_load() {
-        let old = r#"{"id":"6ca13678-8528-4b35-b9d7-e84c845ebb50","title":"Old","tags":["a"],"paper":"Lined","width":794.0,"height":1123.0,"strokes":[],"created":1,"modified":2,"onenote":null}"#;
-        let page: Page = serde_json::from_str(old).unwrap();
-        assert_eq!((page.paper, page.tags.len(), page.texts.len()), (Paper::Lined, 1, 0));
     }
 }

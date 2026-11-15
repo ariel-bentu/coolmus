@@ -23,7 +23,7 @@ use krilla::paint::{Fill, FillRule, Stroke as PdfStroke};
 use krilla::surface::Surface;
 use krilla::text::{Font, TextDirection};
 use krilla::Document;
-use sketch_core::{Color, ImageItem, Page, TextBox};
+use sketch_core::{Color, ImageItem, Page, Rect, TextBox};
 use sketch_render::paper::{self, Mark, PAPER_COLOR};
 use sketch_render::tessellate::outlines;
 
@@ -77,45 +77,9 @@ pub enum Change {
 /// TrueType/OpenType font covering the page's text (Hebrew and Latin); it is
 /// only read when the page has text.
 pub fn write(page: &Page, font: &[u8]) -> Result<Vec<u8>> {
-    let text_font = if page.texts.is_empty() { None } else { Some(TextFont::new(font)?) };
-    let mut doc = Document::new();
-    let mut metadata = Metadata::new().creator("Sketcher".into());
-    if !page.title.is_empty() {
-        metadata = metadata.title(page.title.clone());
-    }
-    doc.set_metadata(metadata);
-
-    let size = PageSettings::from_wh(page.width * PT_PER_PX, page.height * PT_PER_PX)
-        .ok_or_else(|| Error::Write("invalid page size".into()))?;
-    let mut pdf_page = doc.start_page_with(size);
-    let mut surface = pdf_page.surface();
-    surface.push_transform(&Transform::from_scale(PT_PER_PX, PT_PER_PX));
-    draw_paper(&mut surface, page);
-    for image in &page.images {
-        draw_image(&mut surface, image);
-    }
-    for stroke in sketch_render::paint_order(&page.strokes) {
-        let color = stroke.pen.effective_color();
-        let Some(path) = polygons(&outlines(stroke)) else { continue };
-        if color.a == 255 {
-            fill(&mut surface, &path, color);
-        } else {
-            // Opaque inside a translucent group, so self-overlaps don't darken
-            // (same as the raster renderer).
-            surface.push_opacity(opacity(color.a));
-            fill(&mut surface, &path, color.with_alpha(255));
-            surface.pop();
-        }
-    }
-    if let Some(font) = &text_font {
-        for text in &page.texts {
-            draw_text(&mut surface, font, text);
-        }
-    }
-    surface.pop();
-    surface.finish();
-    pdf_page.finish();
-
+    let mut doc = new_document(&page.title);
+    let mut fonts = None;
+    draw_page(&mut doc, page, font, &mut fonts)?;
     doc.embed_file(EmbeddedFile {
         path: PAGE_FILE.into(),
         mime_type: MimeType::new("application/json"),
@@ -130,6 +94,107 @@ pub fn write(page: &Page, font: &[u8]) -> Result<Vec<u8>> {
     stamp_fingerprint(&bytes)
 }
 
+/// One PDF of several pages for printing: drawn like [`write`], without the
+/// page data.
+pub fn print(pages: &[Page], title: &str, font: &[u8]) -> Result<Vec<u8>> {
+    let mut doc = new_document(title);
+    let mut fonts = None;
+    for page in pages {
+        draw_page(&mut doc, page, font, &mut fonts)?;
+    }
+    doc.finish().map_err(|e| Error::Write(format!("{e:?}")))
+}
+
+/// The attached page JSON, if this PDF carries one. Cheaper than [`read`]
+/// when only a few fields are needed.
+pub fn page_data(bytes: &[u8]) -> Result<Option<Vec<u8>>> {
+    Ok(attached_page(&lopdf::Document::load_mem(bytes)?))
+}
+
+/// A font installed with the system that covers Hebrew and Latin text.
+pub fn system_font() -> Option<Vec<u8>> {
+    let windows = std::env::var_os("WINDIR").map(|w| std::path::PathBuf::from(w).join("Fonts"));
+    let candidates = windows
+        .iter()
+        .flat_map(|dir| [dir.join("segoeui.ttf"), dir.join("arial.ttf")])
+        .chain(
+            [
+                "/System/Library/Fonts/Supplemental/Arial.ttf",
+                "/Library/Fonts/Arial.ttf",
+                "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            ]
+            .map(std::path::PathBuf::from),
+        );
+    candidates.into_iter().find_map(|p| std::fs::read(p).ok())
+}
+
+fn new_document(title: &str) -> Document {
+    let mut doc = Document::new();
+    let mut metadata = Metadata::new().creator("Sketcher".into());
+    if !title.is_empty() {
+        metadata = metadata.title(title.to_string());
+    }
+    doc.set_metadata(metadata);
+    doc
+}
+
+/// Adds `page` to `doc`. The font is parsed the first time a page has text.
+fn draw_page<'f>(doc: &mut Document, page: &Page, font: &'f [u8], fonts: &mut Option<TextFont<'f>>) -> Result<()> {
+    if !page.texts.is_empty() && fonts.is_none() {
+        *fonts = Some(TextFont::new(font)?);
+    }
+    for i in 0..page.sheets.max(1) {
+        draw_sheet(doc, page, page.sheet_top(i), fonts.as_ref())?;
+    }
+    Ok(())
+}
+
+/// One PDF page: the sheet whose top edge is at `top`, with the content that
+/// reaches onto it, cut at its edges.
+fn draw_sheet(doc: &mut Document, page: &Page, top: f32, font: Option<&TextFont>) -> Result<()> {
+    let size = PageSettings::from_wh(page.width * PT_PER_PX, page.height * PT_PER_PX)
+        .ok_or_else(|| Error::Write("invalid page size".into()))?;
+    let sheet = Rect { min_x: 0.0, min_y: top, max_x: page.width, max_y: top + page.height };
+    let mut pdf_page = doc.start_page_with(size);
+    let mut surface = pdf_page.surface();
+    surface.push_transform(&Transform::from_scale(PT_PER_PX, PT_PER_PX));
+    draw_paper(&mut surface, page);
+    surface.push_transform(&Transform::from_translate(0.0, -top));
+    let mut clip = PathBuilder::new();
+    clip.push_rect(krilla::geom::Rect::from_ltrb(sheet.min_x, sheet.min_y, sheet.max_x, sheet.max_y).unwrap());
+    surface.push_clip_path(&clip.finish().expect("sheet rect"), &FillRule::NonZero);
+    for image in page.images.iter().filter(|im| im.bounds().intersects(&sheet)) {
+        draw_image(&mut surface, image);
+    }
+    for stroke in sketch_render::paint_order(&page.strokes).filter(|s| s.bounds().intersects(&sheet)) {
+        let color = stroke.pen.effective_color();
+        let Some(path) = polygons(&outlines(stroke)) else { continue };
+        if color.a == 255 {
+            fill(&mut surface, &path, color);
+        } else {
+            // Opaque inside a translucent group, so self-overlaps don't darken
+            // (same as the raster renderer).
+            surface.push_opacity(opacity(color.a));
+            fill(&mut surface, &path, color.with_alpha(255));
+            surface.pop();
+        }
+    }
+    if let Some(font) = font {
+        // A box's height depends on its wrapping, so its estimate gets slack.
+        let reaches = |t: &&TextBox| t.y <= sheet.max_y && t.bounds().max_y + 20.0 * t.size >= sheet.min_y;
+        for text in page.texts.iter().filter(reaches) {
+            draw_text(&mut surface, font, text);
+        }
+    }
+    surface.pop();
+    surface.pop();
+    surface.pop();
+    surface.finish();
+    pdf_page.finish();
+    Ok(())
+}
+
 /// Reads a PDF: Sketcher's own page data if it carries some, and whether
 /// another program has changed the page since.
 pub fn read(bytes: &[u8]) -> Result<Opened> {
@@ -139,39 +204,44 @@ pub fn read(bytes: &[u8]) -> Result<Opened> {
 
     let pages = doc.get_pages();
     let mut changes = Vec::new();
-    if pages.len() > 1 {
-        changes.push(Change::PagesAdded(pages.len() - 1));
+    let sheets = page.sheets.max(1) as usize;
+    if pages.len() > sheets {
+        changes.push(Change::PagesAdded(pages.len() - sheets));
     }
-    if let Some(&page_id) = pages.values().next() {
-        let dict = doc.get_dictionary(page_id)?;
-        let stamped = dict.get(FINGERPRINT_KEY).and_then(|o| o.as_str()).ok();
-        if stamped != Some(fingerprint(&doc, page_id).as_bytes()) {
+    if let Some(&first) = pages.values().next() {
+        let stamped = doc.get_dictionary(first)?.get(FINGERPRINT_KEY).and_then(|o| o.as_str()).ok();
+        if stamped != Some(fingerprint(&doc).as_bytes()) {
             changes.push(Change::ContentRedrawn);
         }
-        let annots = dict.get(b"Annots").ok().map(|a| doc.dereference(a));
-        if let Some(Ok((_, lopdf::Object::Array(a)))) = annots {
-            if !a.is_empty() {
-                changes.push(Change::Annotations(a.len()));
-            }
-        }
+    }
+    let annotations: usize = pages
+        .values()
+        .filter_map(|&id| doc.get_dictionary(id).ok()?.get(b"Annots").ok())
+        .filter_map(|a| doc.dereference(a).ok()?.1.as_array().ok().map(Vec::len))
+        .sum();
+    if annotations > 0 {
+        changes.push(Change::Annotations(annotations));
     }
     Ok(if changes.is_empty() { Opened::Intact(page) } else { Opened::Changed { page, changes } })
 }
 
 // ---- fingerprint ----
 
-/// FNV-1a over the page's decoded content stream: stable across runs and
+/// FNV-1a over all pages' decoded content streams: stable across runs and
 /// Rust versions, and blind to how a resaving program compresses streams.
-fn fingerprint(doc: &lopdf::Document, page_id: lopdf::ObjectId) -> String {
-    let content = doc.get_page_content_with_limit(page_id, MAX_DECODED).unwrap_or_default();
-    let hash = content.iter().fold(0xcbf29ce484222325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+fn fingerprint(doc: &lopdf::Document) -> String {
+    let mut hash = 0xcbf29ce484222325u64;
+    for &page_id in doc.get_pages().values() {
+        let content = doc.get_page_content_with_limit(page_id, MAX_DECODED).unwrap_or_default();
+        hash = content.iter().fold(hash, |h, &b| (h ^ b as u64).wrapping_mul(0x100000001b3));
+    }
     format!("{hash:016x}")
 }
 
 fn stamp_fingerprint(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut doc = lopdf::Document::load_mem(bytes)?;
     let page_id = *doc.get_pages().values().next().ok_or_else(|| Error::Write("no page".into()))?;
-    let fp = fingerprint(&doc, page_id);
+    let fp = fingerprint(&doc);
     doc.get_dictionary_mut(page_id)?.set(FINGERPRINT_KEY, lopdf::Object::string_literal(fp));
     let mut out = Vec::new();
     doc.save_to(&mut out).map_err(|e| Error::Write(e.to_string()))?;
@@ -464,6 +534,24 @@ mod tests {
         doc.save_to(&mut edited).unwrap();
         let Opened::Changed { changes, .. } = read(&edited).unwrap() else { panic!("change not seen") };
         assert_eq!(changes, vec![Change::ContentRedrawn, Change::Annotations(1)]);
+    }
+
+    #[test]
+    fn every_sheet_is_a_pdf_page() {
+        let mut page = ink_page();
+        page.sheets = 3;
+        let pdf = write(&page, &[]).unwrap();
+        assert_eq!(lopdf::Document::load_mem(&pdf).unwrap().get_pages().len(), 3);
+        let Opened::Intact(back) = read(&pdf).unwrap() else { panic!("not intact") };
+        assert_eq!(back.sheets, 3);
+    }
+
+    #[test]
+    fn print_has_one_pdf_page_per_page_and_no_data() {
+        let pdf = print(&[ink_page(), ink_page(), ink_page()], "t", &[]).unwrap();
+        let doc = lopdf::Document::load_mem(&pdf).unwrap();
+        assert_eq!(doc.get_pages().len(), 3);
+        assert!(page_data(&pdf).unwrap().is_none());
     }
 
     #[test]

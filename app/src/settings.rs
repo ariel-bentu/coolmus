@@ -2,20 +2,15 @@
 
 use std::path::PathBuf;
 
-use onenote::AuthConfig;
 use serde::{Deserialize, Serialize};
 use sketch_core::Pen;
-
-/// Application (client) ID of the project's own Entra app registration.
-/// Not a secret: public clients (device-code flow) ship their ID inside the app.
-pub const DEFAULT_CLIENT_ID: &str = "3f6a4493-f7eb-4548-9e76-53e0e5fc2f84";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
-    pub auth: AuthConfig,
-    /// The folder holding all pages; `None` means the default (`Documents/Sketcher`).
-    pub root: Option<String>,
+    /// Folders shown in the tree, in order; empty means the default
+    /// (`Documents/Sketcher`).
+    pub roots: Vec<String>,
     pub smoothing: f32,
     pub pen: Pen,
     /// UI language: "he" (right-to-left) or "en".
@@ -28,19 +23,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        let auth = AuthConfig {
-            client_id: std::env::var("SKETCHER_CLIENT_ID").unwrap_or_else(|_| DEFAULT_CLIENT_ID.to_string()),
-            ..AuthConfig::default()
-        };
-        Self {
-            auth,
-            root: None,
-            smoothing: 0.35,
-            pen: Pen::default(),
-            language: "he".into(),
-            touch_draws: false,
-            text_size: 20.0,
-        }
+        Self { roots: Vec::new(), smoothing: 0.35, pen: Pen::default(), language: "he".into(), touch_draws: false, text_size: 20.0 }
     }
 }
 
@@ -56,15 +39,7 @@ impl Settings {
     }
 
     pub fn load() -> Self {
-        let mut s: Self = std::fs::read(Self::path())
-            .ok()
-            .and_then(|b| serde_json::from_slice(&b).ok())
-            .unwrap_or_default();
-        // Settings saved before a client ID was configured fall back to the built-in one.
-        if s.auth.client_id.trim().is_empty() {
-            s.auth.client_id = Self::default().auth.client_id;
-        }
-        s
+        std::fs::read(Self::path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
 
     pub fn save(&self) {
@@ -75,5 +50,18 @@ impl Settings {
         if let Err(e) = std::fs::write(&path, serde_json::to_vec_pretty(self).unwrap_or_default()) {
             log::warn!("could not save settings: {e}");
         }
+    }
+
+    /// The roots to show: the configured ones, or the default folder
+    /// (created if needed).
+    pub fn root_paths(&self) -> Vec<PathBuf> {
+        if !self.roots.is_empty() {
+            return self.roots.iter().map(PathBuf::from).collect();
+        }
+        let root = sketch_store::default_root();
+        if let Err(e) = std::fs::create_dir_all(&root) {
+            log::error!("could not create {}: {e}", root.display());
+        }
+        vec![root]
     }
 }

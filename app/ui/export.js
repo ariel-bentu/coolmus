@@ -1,7 +1,7 @@
-// Renders a whole page (paper, pictures, ink, text) into a PNG, the same way
-// the screen draws it.
+// Renders a whole page (all its sheets: paper, pictures, ink, text) into one
+// PNG, the same way the screen draws it.
 
-import { PAPER_COLOR, drawPaper, effectiveColor, strokePath } from './ink.js';
+import { PAPER_COLOR, drawPaper, effectiveColor, sheetRects, strokePath, totalHeight } from './ink.js';
 import { colorCss } from './canvas.js';
 
 const FONT = getComputedStyle(document.documentElement).fontFamily || 'sans-serif';
@@ -54,12 +54,21 @@ function drawText(ctx, box) {
 export async function pagePng(page, scale = 2) {
   const c = document.createElement('canvas');
   c.width = Math.ceil(page.width * scale);
-  c.height = Math.ceil(page.height * scale);
+  const height = totalHeight(page);
+  c.height = Math.ceil(height * scale);
   const ctx = c.getContext('2d');
-  ctx.fillStyle = PAPER_COLOR;
-  ctx.fillRect(0, 0, c.width, c.height);
   ctx.setTransform(scale, 0, 0, scale, 0, 0);
-  drawPaper(ctx, page, { minX: 0, minY: 0, maxX: page.width, maxY: page.height }, scale);
+  const sheets = sheetRects(page);
+  const clip = new Path2D();
+  ctx.fillStyle = '#d5d7db'; // the gaps between sheets
+  ctx.fillRect(0, 0, page.width, height);
+  ctx.fillStyle = PAPER_COLOR;
+  for (const r of sheets) {
+    ctx.fillRect(r.x, r.y, r.w, r.h);
+    clip.rect(r.x, r.y, r.w, r.h);
+  }
+  drawPaper(ctx, page, { minX: 0, minY: 0, maxX: page.width, maxY: height }, scale);
+  ctx.clip(clip);
   for (const im of page.images) {
     const img = await load(im.src);
     if (img) ctx.drawImage(img, im.x, im.y, im.width, im.height);

@@ -1,6 +1,6 @@
 [package]
 name = "sketcher"
-description = "Fast pen sketching app: pages as files in folders, tags, OneNote import."
+description = "Fast pen sketching app: pages as PDF files in your own folders, with tags and OneNote import."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -15,7 +15,8 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 sketch-core.workspace = true
 sketch-store.workspace = true
-onenote.workspace = true
+sketch-pdf.workspace = true
+onenote-import.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
@@ -25,3 +26,4 @@ directories = "6"
 rfd = "0.17"
 open = "5"
 base64 = "0.22"
+clipboard-rs = "0.3"

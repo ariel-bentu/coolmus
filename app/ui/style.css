@@ -103,6 +103,7 @@ main { flex: 1; display: flex; min-height: 0; }
   background: var(--panel); border-inline-end: 1px solid var(--border);
   padding: 10px; display: flex; flex-direction: column; gap: 8px;
 }
+body.noSidebar #sidebar { display: none; }
 #search { width: 100%; }
 #tagCloud { display: flex; flex-wrap: wrap; gap: 4px; }
 #tagCloud button { font-size: 12px; min-height: 22px; padding: 1px 8px; border-radius: 999px; }
@@ -133,6 +134,11 @@ details .children { padding-inline-start: 16px; }
 #tree .row.on { background: var(--selected); }
 #tree .row.page.on { font-weight: 600; }
 #tree .row.root { font-weight: 600; }
+#tree .row.missing { opacity: 0.55; }
+#tree .row.sel { background: var(--hover); }
+#tree .pdf .ico svg { color: #c5221f; }
+.rootRow { display: flex; gap: 8px; align-items: center; }
+.rootRow .path { flex: 1; }
 #tree .row.drop { outline: 2px dashed var(--accent); outline-offset: -2px; }
 #tree .ico svg { width: 17px; height: 17px; color: var(--muted); }
 #tree .folder .ico svg { color: #d9a400; fill: rgba(249, 212, 0, 0.25); }
@@ -181,21 +187,6 @@ dialog select { min-width: 5em; }
 .cameraView { width: 100%; max-height: 60vh; background: #000; border-radius: 8px; }
 .pathRow { margin: 6px 0; padding: 6px 8px; background: var(--bg); border-radius: 6px; font-size: 12px; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
 dialog .row { display: flex; gap: 8px; flex-wrap: wrap; }
-#onenote .dest { background: var(--selected); border-radius: 8px; padding: 8px 10px; }
-#onenote details > summary .link { font-size: 12px; }
-
-#onenote {
-  width: 360px; background: var(--panel); border-inline-start: 1px solid var(--border);
-  overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px;
-}
-#onenote h3 { margin: 0; font-size: 15px; }
-#onenote .row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-#onenote .field { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; align-items: center; }
-#onenote .list { border: 1px solid var(--border); border-radius: 6px; max-height: 260px; overflow: auto; padding: 4px; }
-#onenote .code { font-family: Consolas, monospace; font-size: 22px; font-weight: 700; letter-spacing: 2px; direction: ltr; }
-#onenote .selected { background: var(--selected); }
-#onenote .pageRow { display: flex; gap: 6px; align-items: center; padding: 3px 0; }
-#onenote small { color: var(--muted); }
 
 #status {
   display: flex; gap: 8px; align-items: center; padding: 3px 10px; font-size: 12px;
@@ -245,11 +236,11 @@ svg.styleLine .paper { fill: #fdfdfb; stroke: none; }
 .menu button.on { background: var(--accent); color: var(--accent-text); }
 
 /* Full-page mode: only the toolbar and the paper remain. */
-body.full #sidebar, body.full #pagebar, body.full #status, body.full #onenote { display: none !important; }
+body.full #sidebar, body.full #pagebar, body.full #status { display: none !important; }
 /* …and the toolbar keeps only drawing controls, on a single row. */
 body.full #toolbar { flex-wrap: nowrap; overflow-x: auto; }
 body.full #toolbar > * { flex-shrink: 0; }
-body.full :is(#fullBtn, #pageMenu, #oneNoteBtn, #settingsBtn, #langBtn, #toolbar .spacer) { display: none; }
+body.full :is(#sidebarBtn, #fullBtn, #pageMenu, #oneNoteBtn, #settingsBtn, #langBtn, #toolbar .spacer) { display: none; }
 
 /* Exit control for full-page mode, sized for touch/pen (no keyboard needed). */
 #exitFull { display: none; }

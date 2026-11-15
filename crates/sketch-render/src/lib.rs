@@ -1,7 +1,7 @@
 //! Renderer-agnostic stroke geometry plus a CPU rasterizer.
 //!
 //! * [`tessellate`] produces triangle meshes that any GPU front-end can upload.
-//! * [`raster`] renders a whole page to PNG (used for export and OneNote).
+//! * [`raster`] renders a whole page to PNG (used for picture export).
 //! * [`paper`] describes the background pattern so every front-end draws the same paper.
 
 pub mod paper;

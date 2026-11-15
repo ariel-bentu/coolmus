@@ -3,7 +3,6 @@
 mod backend;
 mod commands;
 mod settings;
-mod sync;
 
 use tauri::Manager;
 
@@ -11,8 +10,7 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     tauri::Builder::default()
         .setup(|app| {
-            let state = backend::AppState::init(app.handle().clone());
-            app.manage(state);
+            app.manage(backend::AppState::init());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -27,19 +25,17 @@ fn main() {
             commands::move_item,
             commands::delete_item,
             commands::set_folder_label,
+            commands::copy_items,
+            commands::paste_items,
+            commands::add_root,
+            commands::remove_root,
             commands::update_settings,
-            commands::choose_root,
+            commands::reveal,
+            commands::open_external,
+            commands::print,
+            commands::print_folder,
             commands::save_png,
-            commands::open_url,
-            commands::reveal_root,
-            commands::onenote_sign_in,
-            commands::onenote_cancel,
-            commands::onenote_sign_out,
-            commands::onenote_list_notebooks,
-            commands::onenote_list_pages,
-            commands::onenote_import_page,
-            commands::onenote_import_section,
-            commands::onenote_import_notebook,
+            commands::import_onenote,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Sketcher");

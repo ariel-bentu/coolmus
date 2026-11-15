@@ -1,12 +1,13 @@
 [package]
 name = "sketch-store"
-description = "Local on-disk persistence for the Sketcher library (works fully offline)."
+description = "Sketcher pages as PDF files in ordinary folders under one or more roots."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
 sketch-core.workspace = true
+sketch-pdf.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -14,4 +15,4 @@ directories = "6"
 trash = { version = "5", default-features = false, features = ["coinit_apartmentthreaded"] }
 
 [dev-dependencies]
-serde_json.workspace = true
+lopdf = "0.47"

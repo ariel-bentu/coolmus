@@ -10,7 +10,7 @@
 // onCommit({ strokes?, texts?, images? }) with the new arrays, and the app
 // applies it (which is what makes undo uniform).
 
-import { PAPER_COLOR, bounds, drawPaper, effectiveColor, hit, Smoother, strokePath } from './ink.js';
+import { PAPER_COLOR, bounds, drawPaper, effectiveColor, hit, onSheet, sheetRects, SHEET_GAP, Smoother, strokePath, totalHeight } from './ink.js';
 import { t } from './i18n.js';
 
 const HANDLE = 16; // resize handle size, screen px
@@ -23,10 +23,11 @@ const inside = (r, x, y, pad = 0) => x >= r.minX - pad && x <= r.maxX + pad && y
 const union = (a, b) => (a ? { minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY), maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY) } : b);
 
 export class SketchCanvas {
-  constructor(container, { onCommit, onZoom, onSelection }) {
+  constructor(container, { onCommit, onZoom, onSelection, onSheetChange }) {
     this.container = container;
     this.onCommit = onCommit;
     this.onZoom = onZoom || (() => {});
+    this.onSheetChange = onSheetChange || (() => {});
     this.onSelection = onSelection || (() => {});
     this.base = document.createElement('canvas');
     this.live = document.createElement('canvas');
@@ -77,7 +78,8 @@ export class SketchCanvas {
 
   // ---------- public API ----------
 
-  setPage(page) {
+  /** `view` (from view()) restores a saved zoom and position instead of fitting. */
+  setPage(page, view = null) {
     this.endTextEdit();
     this.page = page;
     this.hidden.clear();
@@ -85,9 +87,21 @@ export class SketchCanvas {
     this.drag = null;
     this.gesture = null;
     this.textsRef = null;
-    this.fitPending = true;
+    this.fitPending = !view;
+    if (view) {
+      this.zoom = Math.min(8, Math.max(0.1, view.zoom));
+      this.ox = -view.x * this.zoom;
+      this.oy = -view.y * this.zoom;
+      this.onZoom(this.zoom);
+    }
     this.resize();
     this.selectionChanged();
+  }
+
+  /** Zoom and the page point at the view's top-left corner, for setPage. */
+  view() {
+    const r = (v, d) => Math.round(v * d) / d;
+    return { zoom: r(this.zoom, 1e4), x: r(-this.ox / this.zoom, 100), y: r(-this.oy / this.zoom, 100) };
   }
 
   /** Call after the page's arrays were replaced (edit, undo, redo). */
@@ -126,6 +140,37 @@ export class SketchCanvas {
     this.requestRender();
   }
 
+  /**
+   * Keeps the sheets in view: no scrolling above the first sheet's top or
+   * past the last one's bottom, and sheets narrower than the view stay
+   * centered instead of drifting sideways.
+   */
+  clampView() {
+    const w = this.container.clientWidth, h = this.container.clientHeight;
+    const m = this.fullPage ? 0 : 24;
+    const W = this.page.width * this.zoom, H = totalHeight(this.page) * this.zoom;
+    const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    this.ox = W + 2 * m <= w ? (w - W) / 2 : clamp(this.ox, w - W - m, m);
+    this.oy = H + 2 * m <= h ? m : clamp(this.oy, h - H - m, m);
+  }
+
+  /** Tells onSheetChange(index, count) about the sheet under the view's middle, when it changes. */
+  reportSheet(sheets) {
+    const mid = (this.container.clientHeight / 2 - this.oy) / this.zoom;
+    let i = sheets.findIndex((r) => mid < r.y + r.h + SHEET_GAP / 2);
+    if (i < 0) i = sheets.length - 1;
+    const key = i + '/' + sheets.length;
+    if (key === this.sheetKey) return;
+    this.sheetKey = key;
+    this.onSheetChange(i, sheets.length);
+  }
+
+  /** Scrolls so sheet `i` starts at the top of the view. */
+  showSheet(i) {
+    this.oy = (this.fullPage ? 0 : 24) - sheetRects(this.page)[i].y * this.zoom;
+    this.requestRender();
+  }
+
   setFullPage(on) {
     this.fullPage = on;
     this.fitPending = true; // re-fit once the layout has settled at its new size
@@ -150,7 +195,7 @@ export class SketchCanvas {
   /** Center of the visible part of the page, in page units. */
   viewCenter() {
     const w = this.container.clientWidth, h = this.container.clientHeight;
-    return { x: (w / 2 - this.ox) / this.zoom, y: (Math.min(h, (this.page?.height ?? h) * this.zoom + this.oy) / 2 - this.oy) / this.zoom };
+    return { x: (w / 2 - this.ox) / this.zoom, y: (Math.min(h, (this.page ? totalHeight(this.page) : h) * this.zoom + this.oy) / 2 - this.oy) / this.zoom };
   }
 
   /** Adds a picture centered at `at` (page units), selected. */
@@ -195,8 +240,10 @@ export class SketchCanvas {
     if (!this.selection.size) return;
     const keep = (arr) => arr.filter((x) => !this.selection.has(x.id));
     const p = this.page;
+    // Filter before clearing: `keep` reads the selection.
+    const change = { strokes: keep(p.strokes), texts: keep(p.texts), images: keep(p.images) };
     this.selection.clear();
-    this.onCommit({ strokes: keep(p.strokes), texts: keep(p.texts), images: keep(p.images) });
+    this.onCommit(change);
   }
 
   duplicateSelection() {
@@ -355,26 +402,25 @@ export class SketchCanvas {
       return;
     }
 
-    if (this.fullPage) {
-      // The paper is the whole view; keep the page origin at or above/left of
-      // the view so ink never goes to negative coordinates.
-      this.ox = Math.min(this.ox, 0);
-      this.oy = Math.min(this.oy, 0);
-      ctx.fillStyle = PAPER_COLOR;
-      ctx.fillRect(0, 0, w, h);
-    } else {
-      ctx.save();
+    this.clampView();
+    const sheets = sheetRects(page);
+    this.reportSheet(sheets);
+    ctx.save();
+    if (!this.fullPage) {
       ctx.shadowColor = 'rgba(0,0,0,0.28)';
       ctx.shadowBlur = 14;
       ctx.shadowOffsetY = 2;
-      ctx.fillStyle = PAPER_COLOR;
-      ctx.fillRect(this.ox, this.oy, page.width * this.zoom, page.height * this.zoom);
-      ctx.restore();
     }
+    ctx.fillStyle = PAPER_COLOR;
+    for (const r of sheets) ctx.fillRect(this.ox + r.x * this.zoom, this.oy + r.y * this.zoom, r.w * this.zoom, r.h * this.zoom);
+    ctx.restore();
 
     ctx.setTransform(dpr * this.zoom, 0, 0, dpr * this.zoom, dpr * this.ox, dpr * this.oy);
     const view = { minX: -this.ox / this.zoom, minY: -this.oy / this.zoom, maxX: (w - this.ox) / this.zoom, maxY: (h - this.oy) / this.zoom };
-    drawPaper(ctx, page, view, this.zoom, this.fullPage);
+    drawPaper(ctx, page, view, this.zoom);
+    // Content shows only on the sheets, cut at their edges like in the PDF.
+    ctx.save();
+    ctx.clip(this.sheetClip(sheets));
 
     const dragged = (id) => this.drag && this.selection.has(id);
     for (const im of page.images) {
@@ -406,9 +452,16 @@ export class SketchCanvas {
         } else ctx.fill(e.path);
       }
     }
+    ctx.restore();
 
     this.syncTexts();
     this.drawTop();
+  }
+
+  sheetClip(sheets = sheetRects(this.page)) {
+    const clip = new Path2D();
+    for (const r of sheets) clip.rect(r.x, r.y, r.w, r.h);
+    return clip;
   }
 
   syncTexts() {
@@ -491,8 +544,11 @@ export class SketchCanvas {
     this.clearLive();
     if (g && g.kind === 'draw') {
       c.setTransform(dpr * this.zoom, 0, 0, dpr * this.zoom, dpr * this.ox, dpr * this.oy);
+      c.save();
+      c.clip(this.sheetClip());
       c.fillStyle = effectiveColor(g.stroke.pen);
       c.fill(strokePath(g.stroke));
+      c.restore();
       return;
     }
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -694,12 +750,12 @@ export class SketchCanvas {
       const [x, y] = this.toPage(e);
       const id = this.pick(x, y);
       if (id && this.page.texts.some((b) => b.id === id)) this.editText(id);
-      else {
+      else if (onSheet(this.page, x, y)) {
         const width = Math.max(120, Math.min(320, this.page.width - x - 16));
         this.beginTextEdit({ id: null, x: Math.round(x), y: Math.round(y - this.textSize * 0.65), width, text: '', size: this.textSize, color: this.pen.color });
       }
       e.preventDefault(); // keep focus in the new text box
-    } else if (e.button === 0 || e.pointerType !== 'mouse') {
+    } else if ((e.button === 0 || e.pointerType !== 'mouse') && onSheet(this.page, ...this.toPage(e))) {
       this.gesture = { kind: 'draw', id: e.pointerId, smoother: new Smoother(this.smoothing, 0.4 / this.zoom), stroke: { id: uid(), pen: structuredClone(this.pen), points: [] } };
       this.addPoint(this.toPage(e));
       this.drawTop();

@@ -1,6 +1,5 @@
-// The sidebar: the page folder as a tree of folders and pages, plus search
-// and the tag list. Paths are relative to the page folder, "/"-separated;
-// "" is the page folder itself.
+// The sidebar: the root folders as a tree of folders, pages and other PDFs,
+// plus search and the tag list. Paths are absolute, "/"-separated.
 
 import { t } from './i18n.js';
 import { $, el, bdi, showMenu } from './ui.js';
@@ -8,26 +7,39 @@ import { labelText } from './labels.js';
 
 const FOLDER = '<svg viewBox="0 0 24 24"><path d="M3 6a1 1 0 011-1h5l2 2h9a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1z"/></svg>';
 const PAGE = '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 14c2-3 3 1 6-2"/></svg>';
+const PDF = '<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13h6M9 16h6M9 10h2"/></svg>';
 const CHEVRON = '<svg viewBox="0 0 24 24" class="chev"><path d="M9 6l6 6-6 6"/></svg>';
 const DRAG_TYPE = 'text/x-sketcher-path';
 
 export const parentOf = (path) => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');
-export const baseName = (path) => path.slice(path.lastIndexOf('/') + 1).replace(/\.sketcher$/i, '');
+export const baseName = (path) => path.slice(path.lastIndexOf('/') + 1).replace(/\.pdf$/i, '');
+export const isInside = (path, folder) => path === folder || path.startsWith(folder + '/');
 
-/** All folders, depth-first, as { path, name, depth } (name: the label if there is one). */
-export function allFolders(nodes, depth = 1, out = []) {
+/** Roots and folders, depth-first, as { path, name, depth } (name: the label if there is one). */
+export function allFolders(nodes, depth = 0, out = []) {
   for (const n of nodes) {
-    if (n.kind !== 'folder') continue;
+    if (n.kind !== 'folder' && n.kind !== 'root') continue;
     out.push({ path: n.path, name: labelText(n.label) || n.name, depth });
     allFolders(n.children ?? [], depth + 1, out);
   }
   return out;
 }
 
+/** The node at `path`, or null. */
+export function findNode(nodes, path) {
+  for (const n of nodes) {
+    if (n.path === path) return n;
+    if (n.children && isInside(path, n.path)) return findNode(n.children, path);
+  }
+  return null;
+}
+
 /**
  * Renders the tree into #tree. `ctx` holds the app state and actions:
- * { state, open(path), newPage(folder), newFolder(parent), rename(node),
- *   move(node), moveTo(path, folder), remove(node), reveal() }
+ * { state, open(node), newPage(folder), newFolder(parent), rename(node),
+ *   move(node), moveTo(path, folder), remove(node), editLabel(node),
+ *   reveal(path), openExternal(path), copy(node), cut(node), paste(folder),
+ *   print(node), importOneNote(folder), removeRoot(node), folderLabel(path), folderPath(path), select(node), saveOpenFolders() }
  */
 export async function renderTree(ctx) {
   const { state } = ctx;
@@ -40,9 +52,9 @@ export async function renderTree(ctx) {
     tree.replaceChildren(
       el('div', { class: 'muted', text: hits.length ? t('results', hits.length) : t('noResults') }),
       ...hits.map((h) =>
-        el('div', { class: 'result' + (h.path === cur ? ' on' : ''), onclick: () => ctx.open(h.path) },
+        el('div', { class: 'result' + (h.path === cur ? ' on' : ''), onclick: () => ctx.open(h) },
           bdi(h.name),
-          el('small', {}, bdi(h.folder ? h.folder.replaceAll('/', ' › ') : t('rootFolder')), ' ', bdi(h.tags.map((x) => '#' + x).join(' '))),
+          el('small', {}, ...ctx.folderPath(h.folder), ' ', bdi(h.tags.map((x) => '#' + x).join(' '))),
         ),
       ),
     );
@@ -50,18 +62,16 @@ export async function renderTree(ctx) {
   }
 
   const rows = [];
-  const rootName = state.root.split(/[\\/]/).filter(Boolean).pop() || t('rootFolder');
-  rows.push(folderRow(ctx, { kind: 'folder', path: '', name: rootName, children: state.tree }, 0, true));
   const walk = (nodes, depth) => {
     for (const n of nodes) {
-      if (n.kind === 'folder') {
-        rows.push(folderRow(ctx, n, depth, state.openFolders.has(n.path)));
-        if (state.openFolders.has(n.path)) walk(n.children ?? [], depth + 1);
-      } else rows.push(pageRow(ctx, n, depth));
+      if (n.kind === 'folder' || n.kind === 'root') {
+        const open = state.openFolders.has(n.path);
+        rows.push(folderRow(ctx, n, depth, open));
+        if (open) walk(n.children ?? [], depth + 1);
+      } else rows.push(fileRow(ctx, n, depth));
     }
   };
-  walk(state.tree, 1);
-  if (!state.tree.length) rows.push(el('p', { class: 'hint', text: t('emptyFolder') }));
+  walk(state.tree, 0);
   tree.replaceChildren(...rows);
 }
 
@@ -69,14 +79,16 @@ function indent(depth) {
   return `padding-inline-start: ${6 + depth * 14}px`;
 }
 
+const selected = (state, node) => state.treeSel?.path === node.path;
+
 function folderRow(ctx, node, depth, open) {
   const { state } = ctx;
-  const isRoot = node.path === '';
+  const isRoot = node.kind === 'root';
   const row = el('div', {
-    class: 'row folder' + (state.folder === node.path ? ' on' : '') + (open ? ' open' : '') + (isRoot ? ' root' : ''),
+    class: 'row folder' + (state.folder === node.path ? ' on' : '') + (open ? ' open' : '') + (isRoot ? ' root' : '') + (node.missing ? ' missing' : ''),
     style: indent(depth),
     draggable: !isRoot,
-    title: isRoot ? state.root : node.path,
+    title: node.path,
     'data-path': node.path,
   });
   const toggle = (on) => {
@@ -84,41 +96,49 @@ function folderRow(ctx, node, depth, open) {
     else state.openFolders.delete(node.path);
     ctx.saveOpenFolders();
   };
-  if (!isRoot) {
-    const chev = el('span', { class: 'chevBtn', html: CHEVRON });
-    chev.addEventListener('click', (e) => {
-      e.stopPropagation();
-      toggle(!open);
-      renderTree(ctx);
-    });
-    row.append(chev);
-  }
+  const chev = el('span', { class: 'chevBtn', html: CHEVRON });
+  chev.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggle(!open);
+    renderTree(ctx);
+  });
+  row.append(chev);
   // A calculated label (e.g. this year's class) is shown in place of the name.
   const label = labelText(node.label);
   row.append(el('span', { class: 'ico', html: FOLDER }), bdi(label || node.name));
   if (label) row.append(el('small', { class: 'techName' }, bdi(node.name)));
-  // Clicking selects the folder (where new pages and imports go) and opens it;
-  // clicking the selected, open folder again closes it.
+  if (node.missing) row.append(el('small', { class: 'techName', text: t('missingRoot') }));
+  // Clicking selects the folder (where new pages go) and opens it; clicking
+  // the selected, open folder again closes it.
   row.addEventListener('click', () => {
     const wasSelected = state.folder === node.path;
     state.folder = node.path;
-    if (!isRoot) toggle(!(open && wasSelected));
+    ctx.select(node);
+    toggle(!(open && wasSelected));
     renderTree(ctx);
   });
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
     state.folder = node.path;
+    ctx.select(node);
     renderTree(ctx);
     showMenu(e.clientX, e.clientY, [
       { text: t('newPageHere'), action: () => ctx.newPage(node.path) },
       { text: t('newFolderHere'), action: () => ctx.newFolder(node.path) },
+      { text: t('pasteItems'), action: () => ctx.paste(node.path) },
+      { text: t('importOneNote'), action: () => ctx.importOneNote(node.path) },
       '-',
+      !isRoot && { text: t('copyItem'), action: () => ctx.copy(node) },
+      !isRoot && { text: t('cutItem'), action: () => ctx.cut(node) },
       !isRoot && { text: t('rename'), action: () => ctx.rename(node) },
       !isRoot && { text: t('moveTo'), action: () => ctx.move(node) },
-      !isRoot && { text: t('folderLabelMenu'), action: () => ctx.editLabel(node) },
-      isRoot && { text: t('revealFolder'), action: () => ctx.reveal() },
-      !isRoot && '-',
-      !isRoot && { text: t('delete'), danger: true, action: () => ctx.remove(node) },
+      { text: t('folderLabelMenu'), action: () => ctx.editLabel(node) },
+      { text: t('printFolder'), action: () => ctx.print(node) },
+      { text: t('revealFolder'), action: () => ctx.reveal(node.path) },
+      '-',
+      isRoot
+        ? { text: t('removeRoot'), action: () => ctx.removeRoot(node) }
+        : { text: t('delete'), danger: true, action: () => ctx.remove(node) },
     ]);
   });
   dropTarget(ctx, row, node.path);
@@ -126,18 +146,29 @@ function folderRow(ctx, node, depth, open) {
   return row;
 }
 
-function pageRow(ctx, node, depth) {
+function fileRow(ctx, node, depth) {
   const { state } = ctx;
+  const isPage = node.kind === 'page';
   const row = el('div', {
-    class: 'row page' + (node.path === state.current?.path ? ' on' : ''),
+    class: 'row ' + node.kind + (node.path === state.current?.path ? ' on' : selected(state, node) ? ' sel' : ''),
     style: indent(depth),
     draggable: true,
     title: node.tags?.length ? node.tags.map((x) => '#' + x).join(' ') : node.name,
-  }, el('span', { class: 'ico', html: PAGE }), bdi(node.name));
-  row.addEventListener('click', () => ctx.open(node.path));
+  }, el('span', { class: 'ico', html: isPage ? PAGE : PDF }), bdi(node.name));
+  row.addEventListener('click', () => {
+    ctx.select(node);
+    ctx.open(node);
+  });
   row.addEventListener('contextmenu', (e) => {
     e.preventDefault();
+    ctx.select(node);
     showMenu(e.clientX, e.clientY, [
+      isPage && { text: t('print'), action: () => ctx.print(node) },
+      { text: t('openInViewer'), action: () => ctx.openExternal(node.path) },
+      { text: t('revealFolder'), action: () => ctx.reveal(node.path) },
+      '-',
+      { text: t('copyItem'), action: () => ctx.copy(node) },
+      { text: t('cutItem'), action: () => ctx.cut(node) },
       { text: t('rename'), action: () => ctx.rename(node) },
       { text: t('moveTo'), action: () => ctx.move(node) },
       '-',

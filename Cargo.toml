@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sketch-core", "crates/sketch-render", "crates/sketch-store", "crates/onenote", "crates/sketch-pdf", "app"]
+members = ["crates/sketch-core", "crates/sketch-render", "crates/sketch-store", "crates/sketch-pdf", "crates/onenote-import", "app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,7 +11,8 @@ license = "MIT"
 sketch-core = { path = "crates/sketch-core" }
 sketch-render = { path = "crates/sketch-render" }
 sketch-store = { path = "crates/sketch-store" }
-onenote = { path = "crates/onenote" }
+sketch-pdf = { path = "crates/sketch-pdf" }
+onenote-import = { path = "crates/onenote-import" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4", "serde"] }

@@ -1,19 +1,17 @@
-// Sketcher UI. Pages are files in folders, read and written by the Rust
-// backend; this module keeps the open page and its undo history, autosaves,
-// and wires the toolbar, the folder tree and the OneNote import panel.
+// Sketcher UI. Pages are PDF files in the user's folders, read and written by
+// the Rust backend; this module keeps the open page and its undo history,
+// autosaves, and wires the toolbar and the folder tree.
 
 import { setLanguage, t, translateDom, getLanguage } from './i18n.js';
 import { SketchCanvas, colorCss } from './canvas.js';
-import { DEFAULT_PAGE } from './ink.js';
+import { bounds, sheetCount, sheetTop, SHEET_GAP } from './ink.js';
 import { $, el, bdi, error, modal, prompt, confirmDialog, showMenu } from './ui.js';
-import { renderTree, allFolders, parentOf, baseName } from './tree.js';
-import { renderOneNote } from './onenote.js';
+import { renderTree, allFolders, findNode, parentOf, baseName, isInside } from './tree.js';
 import { pagePng } from './export.js';
 import { fromBlob, pickFile, takePhoto } from './media.js';
-import { editLabel } from './labels.js';
+import { editLabel, labelText } from './labels.js';
 
 const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
 
 const PALETTE = ['#1a1a1a', '#5f6368', '#d93025', '#f28b00', '#f9d400', '#1e8e3e', '#009688', '#1a73e8', '#7b1fa2', '#e91e63'];
 const STYLES = ['Solid', 'Dashed', 'Dotted', 'Highlighter', 'Pencil'];
@@ -30,28 +28,33 @@ function styleSvg(style, width, color) {
   return `<svg viewBox="0 0 64 24" class="styleLine"><rect width="64" height="24" rx="4" class="paper"/><path d="M8 15C18 5 26 19 36 12S52 7 56 10" ${attrs}/></svg>`;
 }
 const OPEN_FOLDERS_KEY = 'sketcher.openFolders';
+const SIDEBAR_KEY = 'sketcher.sidebarHidden';
 
 const state = {
-  tree: [],
+  tree: [], // root nodes
   tags: [],
-  root: '',
   settings: null,
-  signedIn: false,
   current: null, // { path, page, undo: [], redo: [], dirty, lastChange }
-  folder: '', // selected folder: where new pages and imports go
+  folder: '', // selected folder: where new pages go
+  treeSel: null, // last tree item clicked: target of Ctrl+C / Ctrl+X / Ctrl+V
+  focus: 'page', // 'tree' or 'page': where the keyboard's copy/paste applies
+  cut: [], // paths cut in Sketcher, moved by the next paste
   openFolders: new Set(),
   search: '',
   tool: 'pen',
   fullPage: false,
   busy: false,
+  sheet: 0, // the sheet in view, from the canvas
   selection: { strokes: [], texts: [], images: [] },
-  onenote: { open: false, deviceCode: null, notebooks: [], selectedNotebook: null, selectedSection: null, pages: [] },
 };
 
+let firstRun = true;
 try {
-  state.openFolders = new Set(JSON.parse(localStorage.getItem(OPEN_FOLDERS_KEY) || '[]'));
+  const saved = localStorage.getItem(OPEN_FOLDERS_KEY);
+  firstRun = saved == null;
+  state.openFolders = new Set(JSON.parse(saved || '[]'));
 } catch {
-  /* storage unavailable: start with everything collapsed */
+  /* storage unavailable: start with only the roots open */
 }
 
 // ---------- helpers ----------
@@ -75,7 +78,27 @@ function setStatus(s) {
   $('statusText').textContent = s;
 }
 
-const folderLabel = (path) => (path ? path.replaceAll('/', ' › ') : state.root.split(/[\\/]/).filter(Boolean).pop() || t('rootFolder'));
+/** The names from the root down to `path`, with folder labels in place of names. */
+function folderParts(path) {
+  const root = state.tree.find((r) => isInside(path, r.path));
+  if (!root) return [path];
+  const parts = [];
+  let at = root.path;
+  for (const name of ['', ...path.slice(root.path.length).split('/').filter(Boolean)]) {
+    if (name) at += '/' + name;
+    const node = findNode(state.tree, at);
+    parts.push(labelText(node?.label) || node?.name || name);
+  }
+  return parts;
+}
+
+/** "Root › sub › folder" for a folder path. */
+const folderLabel = (path) => folderParts(path).join(' › ');
+
+/** The same as nodes, each name isolated so the line keeps the UI's direction. */
+const pathNodes = (parts) => parts.flatMap((p, i) => (i ? [' › ', bdi(p)] : [bdi(p)]));
+
+const firstRoot = () => state.tree[0]?.path ?? '';
 
 /** Path after `old` was renamed/moved to `nu` (for paths at or below `old`). */
 function remap(path, old, nu) {
@@ -87,8 +110,44 @@ function remap(path, old, nu) {
 function remapAll(old, nu) {
   if (state.current) state.current.path = remap(state.current.path, old, nu);
   state.folder = remap(state.folder, old, nu);
+  if (state.treeSel) state.treeSel.path = remap(state.treeSel.path, old, nu);
   state.openFolders = new Set([...state.openFolders].map((p) => remap(p, old, nu)));
   saveOpenFolders();
+  views = Object.fromEntries(Object.entries(views).map(([p, v]) => [remap(p, old, nu), v]));
+  storeViews();
+}
+
+// Each page's zoom and scroll position, kept on this computer (not in the
+// file: just looking at a page shouldn't rewrite it, and positions depend on
+// the screen). Keyed by path, most recently used last.
+const VIEWS_KEY = 'sketcher.views';
+const MAX_VIEWS = 1000;
+let views = {};
+try {
+  views = JSON.parse(localStorage.getItem(VIEWS_KEY) || '{}');
+} catch {
+  /* storage unavailable: pages open fitted */
+}
+
+function rememberView() {
+  const c = state.current;
+  if (!c) return;
+  const v = canvas.view();
+  const old = views[c.path];
+  if (old && old.zoom === v.zoom && old.x === v.x && old.y === v.y) return;
+  delete views[c.path];
+  views[c.path] = v;
+  const keys = Object.keys(views);
+  for (const k of keys.slice(0, Math.max(0, keys.length - MAX_VIEWS))) delete views[k];
+  storeViews();
+}
+
+function storeViews() {
+  try {
+    localStorage.setItem(VIEWS_KEY, JSON.stringify(views));
+  } catch {
+    /* not essential */
+  }
 }
 
 function saveOpenFolders() {
@@ -104,6 +163,10 @@ function saveOpenFolders() {
 const canvas = new SketchCanvas($('stage'), {
   onCommit: (change) => commit(change),
   onZoom: (z) => ($('zoomFit').textContent = Math.round(z * 100) + '%'),
+  onSheetChange: (i) => {
+    state.sheet = i;
+    renderStatus();
+  },
   onSelection: (sel) => {
     state.selection = sel;
     renderToolbar();
@@ -119,23 +182,29 @@ function changed() {
   renderStatus();
 }
 
-/** Grows the page so content never falls outside it (PNG export uses the page size). */
-function growPage(page) {
-  let maxX = 0, maxY = 0;
-  for (const s of page.strokes) for (const [x, y] of s.points) {
-    if (x + s.pen.width > maxX) maxX = x + s.pen.width;
-    if (y + s.pen.width > maxY) maxY = y + s.pen.width;
-  }
-  for (const b of page.texts) {
-    maxX = Math.max(maxX, b.x + b.width);
-    maxY = Math.max(maxY, b.y + b.size * 1.3 * Math.max(1, b.text.split('\n').length));
-  }
-  for (const im of page.images) {
-    maxX = Math.max(maxX, im.x + im.width);
-    maxY = Math.max(maxY, im.y + im.height);
-  }
-  page.width = Math.max(page.width, Math.ceil(maxX + 40));
-  page.height = Math.max(page.height, Math.ceil(maxY + 40));
+/** True if anything on the page reaches below `y`. */
+function contentBelow(page, y) {
+  return (
+    page.strokes.some((s) => bounds(s).maxY > y) ||
+    page.texts.some((b) => b.y + b.size * 1.3 > y) ||
+    page.images.some((im) => im.y + im.height > y)
+  );
+}
+
+function addSheet() {
+  const c = state.current;
+  if (!c) return;
+  const n = sheetCount(c.page);
+  commit({ sheets: n + 1 });
+  canvas.showSheet(n);
+}
+
+function removeLastSheet() {
+  const c = state.current;
+  const n = c ? sheetCount(c.page) : 1;
+  if (n < 2) return;
+  if (contentBelow(c.page, sheetTop(c.page, n - 1) - SHEET_GAP)) return error('lastPageNotEmpty');
+  commit({ sheets: n - 1 });
 }
 
 /** Applies an edit from the canvas: new arrays for some of strokes/texts/images. */
@@ -147,7 +216,6 @@ function commit(change) {
     before[k] = c.page[k];
     c.page[k] = change[k];
   }
-  growPage(c.page);
   c.undo.push({ before, after: change });
   if (c.undo.length > 500) c.undo.shift();
   c.redo = [];
@@ -191,6 +259,16 @@ async function setFullPage(on) {
   }
 }
 
+function setSidebar(show) {
+  document.body.classList.toggle('noSidebar', !show);
+  $('sidebarBtn').classList.toggle('on', show);
+  try {
+    localStorage.setItem(SIDEBAR_KEY, show ? '' : '1');
+  } catch {
+    /* not essential */
+  }
+}
+
 function setTool(tool) {
   state.tool = tool;
   canvas.setTool(tool);
@@ -214,27 +292,37 @@ async function saveNow() {
 
 setInterval(() => {
   const c = state.current;
-  if (c && c.dirty && !canvas.isBusy() && performance.now() - c.lastChange > 1000) saveNow().then(refreshTree);
+  if (c && !canvas.gesture) rememberView();
+  if (c && c.dirty && !canvas.isBusy() && performance.now() - c.lastChange > 3000) saveNow().then(refreshTree);
 }, 400);
-window.addEventListener('beforeunload', () => saveNow());
+// "today" becomes "yesterday" at midnight.
+setInterval(renderStatus, 60000);
+window.addEventListener('beforeunload', () => {
+  rememberView();
+  saveNow();
+});
 // The folder may change outside Sketcher (Explorer, OneDrive): rescan on focus.
 window.addEventListener('focus', () => refreshTree());
+
+function setTree(tr) {
+  state.tree = tr.tree;
+  state.tags = tr.tags;
+  if (!state.tree.some((r) => isInside(state.folder, r.path))) state.folder = firstRoot();
+}
 
 let treeVersion = 0;
 async function refreshTree() {
   const v = ++treeVersion;
   const tr = await invoke('get_tree');
   if (v !== treeVersion) return;
-  state.tree = tr.tree;
-  state.tags = tr.tags;
-  state.root = tr.root;
+  setTree(tr);
   renderSidebar();
   renderTagSuggestions();
 }
 
 const treeCtx = {
   state,
-  open: (path) => openPage(path),
+  open: (node) => (node.kind === 'page' ? openPage(node.path) : call('open_external', { path: node.path })),
   newPage: (folder) => newPage(folder),
   newFolder: (parent) => newFolder(parent),
   rename: (node) => renameItem(node),
@@ -247,7 +335,17 @@ const treeCtx = {
     await call('set_folder_label', { path: node.path, label });
     await refreshTree();
   },
-  reveal: () => call('reveal_root'),
+  reveal: (path) => call('reveal', { path }),
+  openExternal: (path) => call('open_external', { path }),
+  copy: (node) => copyItems([node.path], false),
+  cut: (node) => copyItems([node.path], true),
+  paste: (folder) => pasteInto(folder),
+  print: (node) => (node.kind === 'page' ? printPages([node.path], node.name) : printFolder(node)),
+  removeRoot: (node) => removeRoot(node),
+  importOneNote: (folder) => importOneNote(folder),
+  select: (node) => (state.treeSel = { path: node.path, kind: node.kind }),
+  folderLabel,
+  folderPath: (path) => pathNodes(folderParts(path)),
   saveOpenFolders,
 };
 
@@ -258,20 +356,38 @@ function renderSidebar() {
 async function openPage(path, { force = false } = {}) {
   if (!force && state.current?.path === path) return;
   canvas.endTextEdit();
+  rememberView();
   await saveNow();
-  const page = await call('load_page', { path });
+  const { page, changes } = await call('load_page', { path });
+  // Changed in another program (e.g. annotated in Acrobat): saving from here
+  // would drop those changes, so ask first.
+  if (changes.length) {
+    const choice = await modal((d, done) => {
+      d.append(
+        el('h3', { text: t('changedTitle') }),
+        el('p', {}, t('changedText', baseName(path), changes.map((c) => t('change_' + c)).join(', '))),
+        el('div', { class: 'buttons' },
+          el('button', { text: t('openInViewer'), class: 'primary', onclick: () => done('viewer') }),
+          el('button', { text: t('editAnyway'), class: 'danger', onclick: () => done('edit') }),
+          el('button', { text: t('cancel'), onclick: () => done(null) }),
+        ),
+      );
+    });
+    if (choice === 'viewer') call('open_external', { path });
+    if (choice !== 'edit') return;
+  }
   state.current = { path, page, undo: [], redo: [], dirty: false, lastChange: 0 };
   state.folder = parentOf(path);
   // Reveal the opened page; the user may collapse its folders afterwards.
-  for (let p = state.folder; p; p = parentOf(p)) state.openFolders.add(p);
+  for (let p = state.folder; state.tree.some((r) => isInside(p, r.path)); p = parentOf(p)) state.openFolders.add(p);
   saveOpenFolders();
-  canvas.setPage(page);
+  canvas.setPage(page, views[path]);
   renderPage();
   renderSidebar();
-  renderOneNote(oneNoteCtx);
 }
 
 function closePage() {
+  rememberView();
   state.current = null;
   canvas.setPage(null);
   renderPage();
@@ -280,14 +396,13 @@ function closePage() {
 /** Opens the most recently changed page, or creates a first one. */
 async function openSomething() {
   const hits = await invoke('search', { query: '' });
-  if (hits.length) return openPage(hits[0].path);
-  return newPage('');
+  const page = hits.find((h) => h.kind === 'page');
+  if (page) return openPage(page.path).catch(() => {});
+  if (firstRoot()) return newPage(firstRoot());
 }
 
 function pagesIn(folder) {
-  let nodes = state.tree;
-  for (const part of folder.split('/').filter(Boolean)) nodes = nodes.find((n) => n.kind === 'folder' && n.name === part)?.children ?? [];
-  return nodes.filter((n) => n.kind === 'page').length;
+  return (findNode(state.tree, folder)?.children ?? []).filter((n) => n.kind === 'page').length;
 }
 
 async function newPage(folder = state.folder) {
@@ -340,9 +455,7 @@ async function moveItem(path, folder) {
 }
 
 async function moveDialog(node) {
-  const folders = [{ path: '', name: folderLabel(''), depth: 0 }, ...allFolders(state.tree)].filter(
-    (f) => f.path !== node.path && !f.path.startsWith(node.path + '/'),
-  );
+  const folders = allFolders(state.tree).filter((f) => !isInside(f.path, node.path));
   const target = await modal((d, done) => {
     d.append(
       el('h3', {}, t('moveItem', ''), bdi(node.name)),
@@ -368,8 +481,106 @@ async function removeItem(node) {
     closePage();
   }
   await call('delete_item', { path: node.path });
-  if (state.folder === node.path || state.folder.startsWith(node.path + '/')) state.folder = parentOf(node.path);
+  if (isInside(state.folder, node.path)) state.folder = parentOf(node.path);
   await refreshTree();
+  if (!state.current) await openSomething();
+}
+
+// ---------- files: clipboard, folders, printing ----------
+
+/** Puts items on the system clipboard (pasteable in Explorer too); a cut moves them on the next paste in Sketcher. */
+async function copyItems(paths, cut) {
+  await saveNow();
+  await call('copy_items', { paths });
+  state.cut = cut ? paths : [];
+  setStatus(t('copied'));
+}
+
+async function pasteInto(folder) {
+  await saveNow();
+  const { paths, moved } = await call('paste_items', { folder, cut: state.cut });
+  if (moved) {
+    state.cut.forEach((old, i) => remapAll(old, paths[i]));
+    state.cut = [];
+  }
+  state.openFolders.add(folder);
+  saveOpenFolders();
+  await refreshTree();
+  renderStatus();
+  setStatus(t('pasted', paths.length));
+}
+
+/** The folder Ctrl+V pastes into: the selected tree folder, or the selected file's folder. */
+function pasteTarget() {
+  const sel = state.treeSel;
+  if (!sel) return state.folder;
+  return sel.kind === 'folder' || sel.kind === 'root' ? sel.path : parentOf(sel.path);
+}
+
+async function printPages(paths, title) {
+  await saveNow();
+  state.busy = true;
+  renderStatus();
+  try {
+    await call('print', { paths, title });
+  } finally {
+    state.busy = false;
+    renderStatus();
+  }
+}
+
+async function printFolder(node) {
+  await saveNow();
+  state.busy = true;
+  renderStatus();
+  try {
+    await call('print_folder', { folder: node.path, title: labelText(node.label) || node.name });
+  } finally {
+    state.busy = false;
+    renderStatus();
+  }
+}
+
+async function importOneNote(folder) {
+  await saveNow();
+  state.busy = true;
+  renderStatus();
+  setStatus(t('importingOneNote'));
+  try {
+    const done = await call('import_onenote', { folder });
+    setStatus('');
+    if (!done) return;
+    state.openFolders.add(folder);
+    state.openFolders.add(done.folder);
+    state.folder = done.folder;
+    saveOpenFolders();
+    await refreshTree();
+    setStatus(t('importedOneNote', done.pages, folderLabel(done.folder)));
+  } finally {
+    state.busy = false;
+    renderStatus();
+  }
+}
+
+async function addRoot() {
+  await saveNow();
+  const tr = await call('add_root');
+  if (!tr) return null;
+  for (const r of tr.tree) if (!state.tree.some((o) => o.path === r.path)) state.openFolders.add(r.path);
+  saveOpenFolders();
+  setTree(tr);
+  renderSidebar();
+  return tr;
+}
+
+async function removeRoot(node) {
+  if (!(await confirmDialog(t('confirmRemoveRoot', node.name), t('removeRootSub'), t('removeRoot')))) return;
+  if (state.current && isInside(state.current.path, node.path)) {
+    await saveNow();
+    closePage();
+  }
+  setTree(await call('remove_root', { path: node.path }));
+  renderSidebar();
   if (!state.current) await openSomething();
 }
 
@@ -464,20 +675,33 @@ function renderTags() {
       el('span', { class: 'chip' }, bdi('#' + tag), el('button', { title: t('removeTag'), text: '×', onclick: () => { c.page.tags.splice(i, 1); changed(); renderTags(); } })),
     ),
   );
-  $('imported').hidden = !c?.page.onenote;
 }
 
 function renderTagSuggestions() {
   $('tagSuggestions').replaceChildren(...state.tags.map((tag) => el('option', { value: tag })));
 }
 
+/** "today 14:32", "yesterday 14:32", "3 days ago" (up to a week), else "03/11/26 14:32". */
+function editedTime(ms) {
+  const d = new Date(ms);
+  const pad = (n) => String(n).padStart(2, '0');
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const midnight = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((midnight(new Date()) - midnight(d)) / 86400000);
+  if (days === 0) return t('today', time);
+  if (days === 1) return t('yesterday', time);
+  if (days > 1 && days <= 7) return t('daysAgo', days);
+  return `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${pad(d.getFullYear() % 100)} ${time}`;
+}
+
 function renderStatus() {
   const c = state.current;
   $('statusPage').replaceChildren(
     ...(c
-      ? [bdi(folderLabel(parentOf(c.path))), ' · ', t('counts', c.page.strokes.length, c.page.texts.length, c.page.images.length), ' · ', c.dirty ? t('unsaved') : t('saved')]
+      ? [...pathNodes([...folderParts(parentOf(c.path)), baseName(c.path)]), ' · ', t('pageOf', state.sheet + 1, sheetCount(c.page)), c.dirty ? ' · ' + t('unsaved') : '']
       : []),
   );
+  $('edited').textContent = c ? t('edited', editedTime(c.page.modified)) : '';
   $('spinner').hidden = !state.busy;
 }
 
@@ -503,70 +727,6 @@ function addTags(text) {
   }
 }
 
-// ---------- OneNote ----------
-
-const oneNoteCtx = {
-  state,
-  saveSettings: () => saveSettings(),
-  folderLabel,
-  toggle: (on) => toggleOneNote(on),
-};
-
-function toggleOneNote(force) {
-  state.onenote.open = force ?? !state.onenote.open;
-  $('onenote').hidden = !state.onenote.open;
-  $('oneNoteBtn').classList.toggle('on', state.onenote.open);
-  if (state.onenote.open && state.signedIn && !state.onenote.notebooks.length && !state.busy) invoke('onenote_list_notebooks');
-  renderOneNote(oneNoteCtx);
-}
-
-async function onSync(ev) {
-  const o = state.onenote;
-  switch (ev.kind) {
-    case 'busy':
-      state.busy = ev.busy;
-      renderStatus();
-      break;
-    case 'deviceCode':
-      o.deviceCode = { userCode: ev.userCode, verificationUri: ev.verificationUri };
-      toggleOneNote(true);
-      break;
-    case 'signedIn':
-      state.signedIn = true;
-      o.deviceCode = null;
-      setStatus(t('signedIn'));
-      break;
-    case 'signedOut':
-      state.signedIn = false;
-      Object.assign(o, { deviceCode: null, notebooks: [], pages: [], selectedNotebook: null, selectedSection: null });
-      break;
-    case 'notebooks':
-      o.notebooks = ev.notebooks;
-      break;
-    case 'pages':
-      if (o.selectedSection?.id === ev.sectionId) o.pages = ev.pages;
-      break;
-    case 'info':
-      setStatus(t('info_' + ev.key, ...ev.args.map((a, i) => (ev.key === 'importedN' && i === 1 ? folderLabel(a) : a))));
-      break;
-    case 'error':
-      o.deviceCode = null;
-      error(ev.message);
-      break;
-    case 'treeChanged':
-      await refreshTree();
-      break;
-    case 'pageImported':
-      if (ev.open) {
-        await openPage(ev.path);
-        const name = baseName(ev.path);
-        setStatus(ev.existed ? t('alreadyImported', name) : t({ NativeInk: 'importedInk', Empty: 'importedEmpty', SketcherData: 'importedOk' }[ev.source], name));
-      }
-      break;
-  }
-  renderOneNote(oneNoteCtx);
-}
-
 // ---------- settings ----------
 
 function saveSettings() {
@@ -578,32 +738,29 @@ function openSettings() {
   modal((d, done) => {
     const smooth = el('input', { type: 'range', min: 0, max: 0.9, step: 0.05, value: s.smoothing });
     const touch = el('input', { type: 'checkbox', checked: s.touchDraws });
-    const rootText = el('bdi', { class: 'path', text: state.root });
+    const roots = el('div');
+    const renderRoots = () =>
+      roots.replaceChildren(
+        ...state.tree.map((r) =>
+          el('div', { class: 'pathRow rootRow' },
+            el('bdi', { class: 'path', text: r.path }),
+            el('button', { class: 'link', text: t('revealFolder'), onclick: () => call('reveal', { path: r.path }) }),
+            el('button', { class: 'link', text: t('removeRoot'), onclick: async () => { d.close(); await removeRoot(r); } }),
+          ),
+        ),
+      );
+    renderRoots();
     d.append(
       el('h3', { text: t('settings') }),
       el('b', { text: t('drawing') }),
       el('label', {}, t('smoothing'), smooth),
       el('label', {}, touch, t('touchDraws')),
       el('hr'),
-      el('b', { text: t('pageFolder') }),
-      el('p', { class: 'muted', text: t('pageFolderHelp') }),
-      el('div', { class: 'pathRow' }, rootText),
+      el('b', { text: t('folders') }),
+      el('p', { class: 'muted', text: t('foldersHelp') }),
+      roots,
       el('div', { class: 'row' },
-        el('button', {
-          text: t('changeFolder'),
-          onclick: async () => {
-            await saveNow();
-            const tr = await call('choose_root');
-            if (!tr) return;
-            s.root = tr.root;
-            rootText.textContent = tr.root;
-            Object.assign(state, { tree: tr.tree, tags: tr.tags, root: tr.root, folder: '' });
-            closePage();
-            renderSidebar();
-            await openSomething();
-          },
-        }),
-        el('button', { text: t('revealFolder'), onclick: () => call('reveal_root') }),
+        el('button', { text: t('addRoot'), onclick: async () => { if (await addRoot()) renderRoots(); } }),
       ),
       el('div', { class: 'buttons' }, el('button', {
         class: 'primary',
@@ -700,8 +857,15 @@ function bind() {
   $('zoomOut').addEventListener('click', () => canvas.zoomBy(1 / 1.2));
   $('zoomFit').addEventListener('click', () => canvas.fit());
   $('fullBtn').addEventListener('click', () => setFullPage(!state.fullPage));
+  $('sidebarBtn').addEventListener('click', () => setSidebar(document.body.classList.contains('noSidebar')));
+  let sidebarHidden = false;
+  try {
+    sidebarHidden = !!localStorage.getItem(SIDEBAR_KEY);
+  } catch {
+    /* storage unavailable: show it */
+  }
+  setSidebar(!sidebarHidden);
   $('exitFull').addEventListener('click', () => setFullPage(false));
-  $('oneNoteBtn').addEventListener('click', () => toggleOneNote());
   $('settingsBtn').addEventListener('click', openSettings);
   $('newPageBtn').addEventListener('click', () => newPage());
   $('newFolderBtn').addEventListener('click', () => newFolder());
@@ -718,12 +882,16 @@ function bind() {
       { label: t('paper') },
       ...PAPERS.map((p) => ({ text: (c.page.paper === p ? '✓ ' : ' ') + t('paper_' + p), action: () => { c.page.paper = p; changed(); canvas.invalidate(); } })),
       '-',
-      { text: t('extendPage'), action: () => { c.page.height += DEFAULT_PAGE.height / 2; changed(); canvas.invalidate(); } },
+      { text: t('addSheet'), action: addSheet },
+      { text: t('removeSheet'), disabled: sheetCount(c.page) < 2, action: removeLastSheet },
       {
         text: t('clearPage'), danger: true,
         action: () => (c.page.strokes.length || c.page.texts.length || c.page.images.length) && commit({ strokes: [], texts: [], images: [] }),
       },
       '-',
+      { text: t('print'), action: () => printPages([c.path], baseName(c.path)) },
+      { text: t('openInViewer'), action: () => call('open_external', { path: c.path }) },
+      { text: t('revealFolder'), action: () => call('reveal', { path: c.path }) },
       {
         text: t('exportPng'),
         action: async () => {
@@ -768,8 +936,11 @@ function bind() {
   });
 
   // Pictures and text from the clipboard, and image files dropped on the page.
+  // Copy and paste act on the tree after clicking in it, else on the page.
+  $('sidebar').addEventListener('pointerdown', () => (state.focus = 'tree'));
+  $('stage').addEventListener('pointerdown', () => (state.focus = 'page'));
   document.addEventListener('paste', (e) => {
-    if (typing() || !state.current) return;
+    if (typing() || !state.current || state.focus === 'tree') return;
     const file = [...(e.clipboardData?.files ?? [])].find((f) => f.type.startsWith('image/'));
     if (file) {
       e.preventDefault();
@@ -803,12 +974,21 @@ function bind() {
       else if (state.fullPage) setFullPage(false);
       return;
     }
+    if (mod && k === 'p') { e.preventDefault(); if (state.current) printPages([state.current.path], baseName(state.current.path)); return; }
     if (typing()) return;
+    if (mod && state.focus === 'tree' && ['c', 'x', 'v'].includes(k)) {
+      e.preventDefault();
+      const sel = state.treeSel ?? (state.current && { path: state.current.path, kind: 'page' });
+      if (k === 'v') pasteInto(pasteTarget());
+      else if (sel && sel.kind !== 'root') copyItems([sel.path], k === 'x');
+      return;
+    }
     const tool = { v: 'select', p: 'pen', t: 'text', e: 'eraser', h: 'pan' }[k] ?? { KeyV: 'select', KeyP: 'pen', KeyT: 'text', KeyE: 'eraser', KeyH: 'pan' }[e.code];
     if (mod && k === 'z' && !e.shiftKey) { e.preventDefault(); undo(); }
     else if (mod && (k === 'y' || (k === 'z' && e.shiftKey))) { e.preventDefault(); redo(); }
     else if (mod && k === 'n') { e.preventDefault(); newPage(); }
     else if (mod && k === '0') { e.preventDefault(); canvas.fit(); }
+    else if (mod && k === 'b') { e.preventDefault(); setSidebar(document.body.classList.contains('noSidebar')); }
     else if (mod && k === 'a') { e.preventDefault(); setTool('select'); canvas.selectAll(); }
     else if (mod && k === 'd') { e.preventDefault(); canvas.duplicateSelection(); }
     else if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); canvas.deleteSelection(); }
@@ -824,14 +1004,14 @@ function applyLanguage() {
   renderToolbar();
   renderPage();
   renderSidebar();
-  renderOneNote(oneNoteCtx);
   canvas.selectionChanged();
 }
 
 async function start() {
-  await listen('sync', (e) => onSync(e.payload));
   const snap = await invoke('get_state');
-  Object.assign(state, { tree: snap.tree, tags: snap.tags, root: snap.root, settings: snap.settings, signedIn: snap.signedIn });
+  state.settings = snap.settings;
+  setTree(snap);
+  if (firstRun) state.tree.forEach((r) => state.openFolders.add(r.path));
   bind();
   applyLanguage();
   renderTagSuggestions();

@@ -1,6 +1,6 @@
 //! Sketcher core: the platform-independent data model.
 //!
-//! This crate has no knowledge of rendering, storage or OneNote. Everything else
+//! This crate has no knowledge of rendering or storage. Everything else
 //! in the workspace depends on it, never the other way round.
 
 pub mod geometry;
