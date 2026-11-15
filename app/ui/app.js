@@ -5,7 +5,7 @@
 import { setLanguage, t, translateDom, getLanguage } from './i18n.js';
 import { SketchCanvas, colorCss } from './canvas.js';
 import { bounds, sheetCount, sheetTop, SHEET_GAP } from './ink.js';
-import { $, el, bdi, error, modal, prompt, confirmDialog, showMenu } from './ui.js';
+import { $, el, bdi, error, modal, prompt, confirmDialog, showMenu, showPanel, hideMenu } from './ui.js';
 import { renderTree, allFolders, findNode, parentOf, baseName, isInside } from './tree.js';
 import { pagePng, printSheets } from './export.js';
 import * as bg from './background.js';
@@ -16,6 +16,25 @@ const { invoke } = window.__TAURI__.core;
 
 const PALETTE = ['#1a1a1a', '#5f6368', '#d93025', '#f28b00', '#f9d400', '#1e8e3e', '#009688', '#1a73e8', '#7b1fa2', '#e91e63'];
 const STYLES = ['Solid', 'Dashed', 'Dotted', 'Highlighter', 'Pencil'];
+/** A marker is this many times wider than the pen it was switched from. */
+const MARKER_WIDTH = 5;
+const MIN_WIDTH = 0.5, MAX_WIDTH = 40; // the width slider's range
+
+const hslHex = (h, s, l) => {
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    const c = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(c * 255).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+};
+/** The color panel's grid: greys from black to white, then 12 hues from dark to light. */
+const COLOR_GRID = [
+  ...Array.from({ length: 12 }, (_, i) => hslHex(0, 0, i / 11)),
+  ...[0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85].flatMap((l) => Array.from({ length: 12 }, (_, i) => hslHex(i * 30, 0.8, l))),
+];
+const RECENT_COLORS_KEY = 'coolmus.recentColors';
+const RECENT_COLORS = 5;
 const PAPERS = ['Blank', 'Lined', 'Grid', 'Dotted'];
 
 // A sample line in the given style, width and color, drawn on a strip of paper.
@@ -796,7 +815,8 @@ function renderToolbar() {
   const shown = selecting && sel.strokes.length ? sel.strokes[0].pen : selecting && sel.texts.length ? { ...pen, color: sel.texts[0].color } : pen;
   const hex = colorToHex(shown.color);
   $('swatches').querySelectorAll('.swatch').forEach((s) => s.classList.toggle('on', s.dataset.color === hex));
-  $('color').value = hex;
+  // The color button shows a custom color; for the toolbar's own it shows a rainbow.
+  $('colorChip').style.background = PALETTE.includes(hex) ? '' : hex;
   $('width').value = sliderFromWidth(shown.width);
   $('widthOut').textContent = shown.width;
   $('stylePreview').innerHTML = styleSvg(shown.style, shown.width, colorCss(shown.color));
@@ -950,6 +970,49 @@ function penChange(props, { switchToPen = true } = {}) {
   saveSettings();
 }
 
+function loadRecentColors() {
+  try {
+    const list = JSON.parse(localStorage.getItem(RECENT_COLORS_KEY) || '[]');
+    return Array.isArray(list) ? list.filter((c) => /^#[0-9a-f]{6}$/.test(c)).slice(0, RECENT_COLORS) : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Remembers a color picked from the panel (not one of the toolbar's), newest first. */
+function rememberColor(hex) {
+  if (PALETTE.includes(hex)) return;
+  const list = [hex, ...loadRecentColors().filter((c) => c !== hex)].slice(0, RECENT_COLORS);
+  try {
+    localStorage.setItem(RECENT_COLORS_KEY, JSON.stringify(list));
+  } catch {
+    /* not essential */
+  }
+}
+
+/** The color panel under the color button: recent custom colors, then the grid. */
+function openColorPanel(anchor) {
+  const current = colorToHex((state.shownPen ?? state.settings.pen).color);
+  const chip = (hex) =>
+    el('button', {
+      class: 'chip' + (hex === current ? ' on' : ''),
+      title: hex,
+      style: `background:${hex}`,
+      onclick: () => {
+        hideMenu();
+        rememberColor(hex);
+        penChange({ color: hexToColor(hex) });
+      },
+    });
+  const recent = loadRecentColors();
+  const panel = el('div', { class: 'colorPanel' },
+    ...(recent.length ? [el('div', { class: 'label', text: t('recentColors') }), el('div', { class: 'colorRow' }, ...recent.map(chip))] : []),
+    el('div', { class: 'colorGrid' }, ...COLOR_GRID.map(chip)),
+  );
+  const rtl = document.documentElement.dir === 'rtl';
+  showPanel(rtl ? anchor.right - 290 : anchor.left, anchor.bottom + 4, panel);
+}
+
 function bind() {
   document.querySelectorAll('.tool').forEach((b) => b.addEventListener('click', () => setTool(b.dataset.tool)));
   $('swatches').replaceChildren(
@@ -965,17 +1028,18 @@ function bind() {
     showMenu(rtl ? r.right - 180 : r.left, r.bottom + 4, STYLES.map((s) => ({
       html: styleSvg(s, shown.width, colorCss(shown.color)) + `<span>${t('style_' + s)}</span>`,
       on: s === shown.style,
-      action: () => penChange({ style: s }),
+      action: () => {
+        // A marker is much wider than a pen: scale the width on the way in and out.
+        const marker = (style) => style === 'Highlighter';
+        const factor = marker(s) === marker(shown.style) ? 1 : marker(s) ? MARKER_WIDTH : 1 / MARKER_WIDTH;
+        const width = Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, shown.width * factor)) * 10) / 10;
+        penChange({ style: s, width });
+      },
     })));
   });
-  $('color').addEventListener('input', (e) => {
-    if (state.tool === 'select' && state.selection.strokes.length + state.selection.texts.length) return;
-    state.settings.pen.color = hexToColor(e.target.value);
-    renderToolbar();
-  });
-  $('color').addEventListener('change', (e) => {
-    penChange({ color: hexToColor(e.target.value) }, { switchToPen: false });
-    e.target.blur();
+  $('color').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openColorPanel(e.currentTarget.getBoundingClientRect());
   });
   $('width').addEventListener('input', (e) => {
     $('widthOut').textContent = widthFromSlider(Number(e.target.value));

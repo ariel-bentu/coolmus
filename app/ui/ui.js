@@ -91,6 +91,17 @@ export function showMenu(x, y, items) {
             }, it.icon ? '' : it.text ?? ''),
     ),
   );
+  place(m, x, y);
+}
+
+/** Shows `content` (an element) in the popup menus use, at (x, y). */
+export function showPanel(x, y, content) {
+  const m = $('menu');
+  m.replaceChildren(content);
+  place(m, x, y);
+}
+
+function place(m, x, y) {
   m.hidden = false;
   const r = m.getBoundingClientRect();
   m.style.left = Math.max(4, Math.min(x, innerWidth - r.width - 4)) + 'px';
