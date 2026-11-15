@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sketch-core", "crates/sketch-render", "crates/sketch-store", "crates/onenote", "app"]
+members = ["crates/sketch-core", "crates/sketch-render", "crates/sketch-store", "crates/onenote", "crates/sketch-pdf", "app"]
 
 [workspace.package]
 version = "0.1.0"
