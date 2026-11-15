@@ -13,10 +13,17 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('..', import.meta.url));
 const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd: root, encoding: 'utf8', stdio: opts.quiet ? 'pipe' : 'inherit', ...opts });
 const git = (...args) => run('git', args, { quiet: true }).trim();
-const push = (...args) => run('git', ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential', 'push', ...args]);
 const fail = (msg) => {
   console.error(`release: ${msg}`);
   process.exit(1);
+};
+const push = (...args) => {
+  try {
+    run('git', ['-c', 'credential.helper=', '-c', 'credential.helper=!gh auth git-credential', 'push', ...args]);
+  } catch {
+    // git has printed why; a missing "workflow" permission is fixed with:
+    fail('the push failed (see above). If GitHub asked for the "workflow" scope, run: gh auth refresh -h github.com -s workflow');
+  }
 };
 
 const CONF = 'app/tauri.conf.json';
