@@ -6,7 +6,7 @@ A fast pen-sketching app for Windows. Every page is an ordinary **PDF file** in 
 
 On Windows 10 or 11: download the latest **`…_x64-setup.exe`** from [Releases](https://github.com/ariel-bentu/coolmus/releases) and run it. It installs for your user only (no administrator rights) and adds Coolmus to the Start menu; WebView2 is installed if it's missing. The installer isn't signed yet, so Windows may show *"Windows protected your PC"*: click **More info → Run anyway**.
 
-**Releasing a version:** set the version in `app/tauri.conf.json`, commit, then push a matching tag (`git tag v0.1.0 && git push origin v0.1.0`). GitHub Actions runs the tests on Windows, builds the installers and attaches them to a draft release to review and publish.
+**Releasing a version:** `npm run release -- 0.2.0` (or `npm run release` for the version already in `app/tauri.conf.json`). It sets the version, pushes `main` and a `v0.2.0` tag; GitHub Actions then runs the tests on Windows, builds the installers and attaches them to a draft release to review and publish. `npm run release:watch` follows the build. The other shortcuts in `package.json` (`dev`, `test`, `build:windows`, `push`) are plain cargo and git commands; npm is only a launcher for them.
 
 ## Features
 

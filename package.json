@@ -1,0 +1,13 @@
+{
+  "name": "coolmus",
+  "private": true,
+  "description": "Shortcuts for developing and releasing Coolmus (no dependencies; the app itself needs no npm).",
+  "scripts": {
+    "dev": "cargo run -p coolmus",
+    "test": "cargo test --workspace",
+    "build:windows": "./scripts/build-windows.sh",
+    "push": "git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin main",
+    "release": "node scripts/release.mjs",
+    "release:watch": "gh run watch $(gh run list --workflow release.yml --limit 1 --json databaseId --jq '.[0].databaseId')"
+  }
+}
