@@ -19,6 +19,22 @@ export const isInside = (path, folder) => path === folder || path.startsWith(fol
 /** True if the root at `path` shows its contents at the top level of the tree. */
 export const isFlat = (state, path) => (state.settings?.flatRoots ?? []).includes(path);
 
+/**
+ * "Move up" / "Move down" for a root among the roots, a folder among its
+ * sibling folders, or a file among its sibling files.
+ */
+function orderItems(ctx, node) {
+  const isFolder = (n) => n.kind === 'folder' || n.kind === 'root';
+  const siblings = node.kind === 'root' ? ctx.state.tree : (findNode(ctx.state.tree, parentOf(node.path))?.children ?? []).filter((n) => isFolder(n) === isFolder(node));
+  const i = siblings.findIndex((n) => n.path === node.path);
+  if (siblings.length < 2) return [];
+  const move = (delta) => (node.kind === 'root' ? ctx.moveRoot(node, delta) : ctx.reorder(node, delta));
+  return [
+    { text: t('moveUp'), disabled: i === 0, action: () => move(-1) },
+    { text: t('moveDown'), disabled: i === siblings.length - 1, action: () => move(1) },
+  ];
+}
+
 /** Roots and folders, depth-first, as { path, name, depth } (name: the label if there is one). */
 export function allFolders(nodes, depth = 0, out = []) {
   for (const n of nodes) {
@@ -125,6 +141,7 @@ function folderRow(ctx, node, depth, open) {
       { text: t('newPageHere'), action: () => ctx.newPage(node.path) },
       { text: t('newFolderHere'), action: () => ctx.newFolder(node.path) },
       '-',
+      ...orderItems(ctx, node),
       ...(isRoot
         ? [{ text: t('removeRoot'), action: () => ctx.removeRoot(node) }]
         : [
@@ -172,6 +189,7 @@ export function folderMenu(ctx, node, x, y) {
       { text: t('printFolder'), action: () => ctx.print(node) },
       { text: t('revealFolder'), action: () => ctx.reveal(node.path) },
       isRoot && { text: (isFlat(ctx.state, node.path) ? '✓ ' : '') + t('flatRoot'), action: () => ctx.toggleFlat(node) },
+      ...orderItems(ctx, node),
       '-',
       isRoot
         ? { text: t('removeRoot'), action: () => ctx.removeRoot(node) }
@@ -201,6 +219,7 @@ function fileRow(ctx, node, depth) {
     { text: t('cutItem'), action: () => ctx.cut(node) },
     { text: t('rename'), action: () => ctx.rename(node) },
     { text: t('moveTo'), action: () => ctx.move(node) },
+    ...orderItems(ctx, node),
     '-',
     { text: t('delete'), danger: true, action: () => ctx.remove(node) },
   ]);

@@ -389,6 +389,13 @@ function setTree(tr) {
 }
 
 let treeVersion = 0;
+
+/** Shows a tree the backend returned after changing the roots; a refresh still on its way is dropped. */
+function applyTree(tr) {
+  treeVersion++;
+  setTree(tr);
+  renderSidebar();
+}
 async function refreshTree() {
   const v = ++treeVersion;
   const tr = await invoke('get_tree');
@@ -426,6 +433,8 @@ const treeCtx = {
   folderPath: (path) => pathNodes(folderParts(path)),
   dropFiles,
   toggleFlat,
+  moveRoot,
+  reorder: reorderItem,
   saveOpenFolders,
 };
 
@@ -751,8 +760,7 @@ async function addRoot() {
   if (!tr) return null;
   for (const r of tr.tree) if (!state.tree.some((o) => o.path === r.path)) state.openFolders.add(r.path);
   saveOpenFolders();
-  setTree(tr);
-  renderSidebar();
+  applyTree(tr);
   return tr;
 }
 
@@ -775,9 +783,18 @@ async function removeRoot(node) {
     await saveNow();
     closePage();
   }
-  setTree(await call('remove_root', { path: node.path }));
-  renderSidebar();
+  applyTree(await call('remove_root', { path: node.path }));
   if (!state.current) await openSomething();
+}
+
+/** Moves a folder or file up (-1) or down (+1) among its siblings. */
+async function reorderItem(node, delta) {
+  applyTree(await call('reorder', { path: node.path, delta }));
+}
+
+/** Moves a root up (-1) or down (+1) in the tree. */
+async function moveRoot(node, delta) {
+  applyTree(await call('move_root', { path: node.path, delta }));
 }
 
 // ---------- pictures ----------
@@ -945,6 +962,8 @@ function openSettings() {
           el('div', { class: 'pathRow rootRow' },
             el('bdi', { class: 'path', dir: 'ltr', text: r.path }),
             el('label', {}, el('input', { type: 'checkbox', checked: isFlat(state, r.path), onchange: () => toggleFlat(r) }), t('flatRoot')),
+            el('button', { class: 'link', text: '↑', title: t('moveUp'), disabled: r === state.tree[0], onclick: async () => { await moveRoot(r, -1); renderRoots(); } }),
+            el('button', { class: 'link', text: '↓', title: t('moveDown'), disabled: r === state.tree[state.tree.length - 1], onclick: async () => { await moveRoot(r, 1); renderRoots(); } }),
             el('button', { class: 'link', text: t('revealFolder'), onclick: () => call('reveal', { path: r.path }) }),
             el('button', { class: 'link', text: t('removeRoot'), onclick: async () => { d.close(); await removeRoot(r); } }),
           ),

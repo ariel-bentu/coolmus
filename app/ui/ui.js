@@ -44,7 +44,9 @@ export function modal(build) {
       resolve(v);
     };
     build(d, done);
-    d.onclose = () => done(null);
+    // Closing one dialog and opening the next (same element) delivers the
+    // first one's close event late, to the new one: only a real close counts.
+    d.onclose = () => d.open || done(null);
     d.showModal();
   });
 }

@@ -215,8 +215,35 @@ pub async fn add_root(state: State<'_, AppState>) -> CmdResult<Option<Tree>> {
 pub async fn remove_root(state: State<'_, AppState>, path: String) -> CmdResult<Tree> {
     let roots = {
         let mut s = state.settings();
-        let gone = PathBuf::from(&path);
-        s.roots = s.root_paths().into_iter().filter(|r| *r != gone).map(|r| r.display().to_string()).collect();
+        // Compared the way the UI names them ("/"-separated), on any platform.
+        s.roots = s.root_paths().into_iter().filter(|r| coolmus_store::api_path(r) != path).map(|r| r.display().to_string()).collect();
+        s.save();
+        s.root_paths()
+    };
+    state.store().set_roots(roots);
+    Ok(tree_of(&state))
+}
+
+/// Moves a folder or file one place up (`delta` -1) or down (+1) among its
+/// siblings; the order is kept in the parent folder. Returns the new tree.
+#[tauri::command]
+pub async fn reorder(state: State<'_, AppState>, path: String, delta: i32) -> CmdResult<Tree> {
+    state.store().reorder(&path, delta).map_err(err)?;
+    Ok(tree_of(&state))
+}
+
+/// Moves a root up (`delta` -1) or down (+1) in the list. Returns the new tree.
+#[tauri::command]
+pub async fn move_root(state: State<'_, AppState>, path: String, delta: i32) -> CmdResult<Tree> {
+    let roots = {
+        let mut s = state.settings();
+        let mut roots = s.root_paths();
+        if let Some(i) = roots.iter().position(|r| coolmus_store::api_path(r) == path) {
+            let j = (i as i32 + delta).clamp(0, roots.len() as i32 - 1) as usize;
+            let root = roots.remove(i);
+            roots.insert(j, root);
+        }
+        s.roots = roots.iter().map(|r| r.display().to_string()).collect();
         s.save();
         s.root_paths()
     };

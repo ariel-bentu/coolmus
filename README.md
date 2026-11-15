@@ -27,6 +27,7 @@ On Windows 10 or 11: download the latest **`…_x64-setup.exe`** from [Releases]
 - **Your folders, as they are on disk.** Add one or more folders (for example `Documents\Coolmus` and a folder inside OneDrive); the sidebar shows their real subfolders and files. A folder can also show its contents directly at the top of the list, without its own row.
 - **Everything in reach.** Hovering over a folder or file shows a ⋮ button (new page, new folder, rename, delete for folders; print, open, copy, move, rename, delete for files); right-click has the full menu. Every menu has an ✕, so a pen never needs right-click or Esc.
 - **Move and copy.** Drag pages and folders between any of your folders. Copy (Ctrl+C) a page or folder and paste it in File Explorer, or copy files there and paste them here; drag files or whole folders from Explorer onto a folder to copy them in. Deleted items go to the Recycle Bin.
+- **Your order.** Folders and pages are listed alphabetically until you order them: *Move up* / *Move down* in their ⋮ or right-click menu (folders among folders, pages among pages). The folders you added can be reordered the same way, or in Settings.
 - **Calculated folder labels.** A folder can keep a fixed name (for example `class of 2021`) and show a label calculated from the date: `כיתה ג-3` this school year, `כיתה ד-3` from next September. See below.
 - **Tags and search.** Add tags to a page (existing ones are suggested) and search by name and `#tag` together, for example `bridge #work`.
 - **Import from OneNote,** several notebooks or sections at once, with progress as it goes. See below.
@@ -81,7 +82,7 @@ Coolmus reads the attachment back, so nothing is lost between edits; the drawing
 
 **Drawing on another PDF.** Opening a PDF Coolmus didn't make shows its pages, as they are, as the sheets; the file isn't touched until you change something. Saving keeps every part of the PDF (its pages, comments, links, attachments) and adds two things: your layer, drawn over each page you drew on, and the page data. Saving again replaces the layer rather than adding another, and Coolmus can always take it off to get the PDF back as it was (that's what it shows under your editable layer). The page data records the size of each of the PDF's pages under `"background"`. Encrypted PDFs can be viewed but not saved.
 
-A folder with a calculated label also contains a hidden `.coolmus-folder.json`, so the label moves and syncs with the folder.
+A folder with a calculated label, or whose contents you've put in your own order, also contains a hidden `.coolmus-folder.json` holding them, so they move and sync with the folder. Items it doesn't list (for example ones added in Explorer) follow, alphabetically.
 
 ### Importing from OneNote
 

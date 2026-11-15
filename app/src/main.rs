@@ -38,6 +38,8 @@ fn main() {
             commands::drop_file,
             commands::add_root,
             commands::remove_root,
+            commands::move_root,
+            commands::reorder,
             commands::update_settings,
             commands::reveal,
             commands::open_external,

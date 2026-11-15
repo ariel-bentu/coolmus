@@ -47,6 +47,42 @@ pub enum FolderLabel {
 struct FolderInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     label: Option<FolderLabel>,
+    /// File and folder names in the order the user put them; anything not
+    /// listed follows, alphabetically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    order: Vec<String>,
+}
+
+/// Writes a folder's settings file, or removes it when there's nothing to keep.
+fn write_folder_info(dir: &Path, info: &FolderInfo) -> Result<()> {
+    let file = dir.join(FOLDER_INFO);
+    if info.label.is_none() && info.order.is_empty() {
+        if file.exists() {
+            fs::remove_file(&file).map_err(io_err(&file))?;
+        }
+        return Ok(());
+    }
+    write_atomic(&file, &serde_json::to_vec_pretty(info).expect("folder info serializes"))
+}
+
+/// Renames (or with `None`, drops) an entry of a folder's order.
+fn rename_in_order(dir: &Path, old: &str, new: Option<&str>) -> Result<()> {
+    let mut info = read_folder_info(dir);
+    let Some(i) = info.order.iter().position(|n| n == old) else { return Ok(()) };
+    match new {
+        Some(new) => info.order[i] = new.to_string(),
+        None => {
+            info.order.remove(i);
+        }
+    }
+    write_folder_info(dir, &info)
+}
+
+/// Sorts items as a folder's order lists their file names, then the rest
+/// alphabetically by the name shown.
+fn in_order<T>(items: &mut [T], order: &[String], file_name: impl Fn(&T) -> String, shown: impl Fn(&T) -> String) {
+    let rank = |t: &T| order.iter().position(|o| *o == file_name(t)).unwrap_or(usize::MAX);
+    items.sort_by(|a, b| rank(a).cmp(&rank(b)).then_with(|| shown(a).to_lowercase().cmp(&shown(b).to_lowercase())));
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -355,9 +391,10 @@ impl Store {
                 files.push(node);
             }
         }
-        let by_name = |a: &Node, b: &Node| a.name.to_lowercase().cmp(&b.name.to_lowercase());
-        folders.sort_by(by_name);
-        files.sort_by(by_name);
+        let order = read_folder_info(dir).order;
+        let file_name = |n: &Node| n.path.rsplit('/').next().unwrap_or("").to_string();
+        in_order(&mut folders, &order, file_name, |n| n.name.clone());
+        in_order(&mut files, &order, file_name, |n| n.name.clone());
         folders.extend(files);
         folders
     }
@@ -490,16 +527,47 @@ impl Store {
         if !dir.is_dir() {
             return Err(StoreError::InvalidPath);
         }
-        let file = dir.join(FOLDER_INFO);
         let mut info = read_folder_info(&dir);
         info.label = label;
-        if info.label.is_none() {
-            if file.exists() {
-                fs::remove_file(&file).map_err(io_err(&file))?;
+        write_folder_info(&dir, &info)
+    }
+
+    /// The folders and the page/PDF files directly in `dir`, by file name, in
+    /// the order the tree shows them.
+    fn listing(dir: &Path) -> Result<(Vec<String>, Vec<String>)> {
+        let (mut folders, mut files) = (Vec::new(), Vec::new());
+        for entry in fs::read_dir(dir).map_err(io_err(dir))?.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if hidden(&name) {
+                continue;
             }
-            return Ok(());
+            if entry.path().is_dir() {
+                folders.push(name);
+            } else if is_pdf(&entry.path()) {
+                files.push(name);
+            }
         }
-        write_atomic(&file, &serde_json::to_vec_pretty(&info).expect("folder info serializes"))
+        let order = read_folder_info(dir).order;
+        in_order(&mut folders, &order, |n| n.clone(), |n| n.clone());
+        in_order(&mut files, &order, |n| n.clone(), |n| stem_of(n).to_string());
+        Ok((folders, files))
+    }
+
+    /// Moves a folder or file one place up (`delta` -1) or down (+1) among
+    /// its siblings of the same kind, and remembers the order in the parent.
+    pub fn reorder(&mut self, path: &str, delta: i32) -> Result<()> {
+        let item = self.resolve_item(path)?;
+        let dir = item.parent().ok_or(StoreError::InvalidPath)?.to_path_buf();
+        let name = item.file_name().ok_or(StoreError::InvalidPath)?.to_string_lossy().to_string();
+        let (mut folders, mut files) = Self::listing(&dir)?;
+        let group = if item.is_dir() { &mut folders } else { &mut files };
+        let i = group.iter().position(|n| *n == name).ok_or(StoreError::InvalidPath)?;
+        let j = (i as i32 + delta).clamp(0, group.len() as i32 - 1) as usize;
+        let moved = group.remove(i);
+        group.insert(j, moved);
+        let mut info = read_folder_info(&dir);
+        info.order = folders.into_iter().chain(files).collect();
+        write_folder_info(&dir, &info)
     }
 
     /// Re-keys index entries at or below `from` after a move.
@@ -540,8 +608,13 @@ impl Store {
     pub fn rename(&mut self, path: &str, new_name: &str) -> Result<String> {
         let from = self.resolve_item(path)?;
         let (_, ext) = Self::name_parts(&from)?;
-        let to = Self::unique(from.parent().ok_or(StoreError::InvalidPath)?, new_name, &ext, Some(&from))?;
-        self.move_path(&from, &to)
+        let dir = from.parent().ok_or(StoreError::InvalidPath)?.to_path_buf();
+        let to = Self::unique(&dir, new_name, &ext, Some(&from))?;
+        let moved = self.move_path(&from, &to)?;
+        // It keeps its place in the folder's order.
+        let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        rename_in_order(&dir, &name(&from), Some(&name(&to)))?;
+        Ok(moved)
     }
 
     /// Moves a file or folder into `folder`, which may be in another root.
@@ -557,7 +630,11 @@ impl Store {
         }
         let (name, ext) = Self::name_parts(&from)?;
         let to = Self::unique(&dir, &name, &ext, None)?;
-        self.move_path(&from, &to)
+        let moved = self.move_path(&from, &to)?;
+        if let (Some(parent), Some(old)) = (from.parent(), from.file_name()) {
+            rename_in_order(parent, &old.to_string_lossy(), None)?;
+        }
+        Ok(moved)
     }
 
     /// Copies files or folders (from anywhere, e.g. pasted from Explorer) into
@@ -594,6 +671,9 @@ impl Store {
     pub fn delete(&mut self, path: &str) -> Result<()> {
         let file = self.resolve_item(path)?;
         trash::delete(&file).map_err(|e| StoreError::Trash(e.to_string()))?;
+        if let (Some(parent), Some(name)) = (file.parent(), file.file_name()) {
+            rename_in_order(parent, &name.to_string_lossy(), None)?;
+        }
         let key = api_path(&file);
         self.index.retain(|k, _| *k != key && !k.starts_with(&format!("{key}/")));
         Ok(())
@@ -728,6 +808,43 @@ mod tests {
         assert_eq!(store.load_page(&path).unwrap().page.strokes.len(), 1);
         let under = store.background(&path).unwrap();
         assert!(coolmus_pdf::page_data(&under).unwrap().is_none());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn folders_and_pages_keep_the_order_they_are_given() {
+        let dir = temp_dir("order");
+        let mut store = store(&[&dir]);
+        let root = api_path(&dir);
+        for f in ["a", "b", "c"] {
+            store.create_folder(&root, f).unwrap();
+        }
+        for p in ["p1", "p2"] {
+            store.create_page(&root, &Page::new(p)).unwrap();
+        }
+        let shown = |store: &mut Store| -> Vec<String> { names(&store.tree()[0].children).into_iter().map(String::from).collect() };
+        assert_eq!(shown(&mut store), vec!["a", "b", "c", "p1", "p2"], "alphabetical to start with");
+
+        // Folders move among folders, pages among pages; the ends stay put.
+        store.reorder(&api_path(&dir.join("c")), -1).unwrap();
+        store.reorder(&api_path(&dir.join("c")), -1).unwrap();
+        store.reorder(&api_path(&dir.join("c")), -1).unwrap();
+        store.reorder(&api_path(&dir.join("p2.pdf")), -1).unwrap();
+        assert_eq!(shown(&mut store), vec!["c", "a", "b", "p2", "p1"]);
+
+        // Renaming keeps the place; new items go last; moving out drops the entry.
+        store.rename(&api_path(&dir.join("a")), "zed").unwrap();
+        store.create_folder(&root, "aa").unwrap();
+        assert_eq!(shown(&mut store), vec!["c", "zed", "b", "aa", "p2", "p1"]);
+        store.move_into(&api_path(&dir.join("b")), &api_path(&dir.join("c"))).unwrap();
+        assert_eq!(shown(&mut store), vec!["c", "zed", "aa", "p2", "p1"]);
+        assert!(!read_folder_info(&dir).order.contains(&"b".to_string()));
+
+        // A label on the same folder lives alongside the order.
+        let label = FolderLabel::SchoolGrade { first_grade_year: 2024, class_number: "1".into(), template: "{grade}".into() };
+        store.set_folder_label(&root, Some(label)).unwrap();
+        store.set_folder_label(&root, None).unwrap();
+        assert_eq!(shown(&mut store), vec!["c", "zed", "aa", "p2", "p1"], "removing the label keeps the order");
         fs::remove_dir_all(&dir).unwrap();
     }
 
