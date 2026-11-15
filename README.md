@@ -1,32 +1,43 @@
-# Coolmus
+# Coolmus · קולמוס
 
-A fast pen-sketching app for Windows. Every page is an ordinary **PDF file** in your own folders: anyone can open it in any PDF viewer, and in Coolmus its vector ink, text boxes and pictures stay fully editable.
+A pen notebook for Windows, Hebrew first. Every page is an ordinary **PDF file** in your own folders: anyone can open it in any PDF viewer, and in Coolmus its vector ink, text boxes and pictures stay fully editable. You can also write on any other PDF, and bring your OneNote notebooks along.
+
+![Coolmus: a math page drawn with the pen, notes in Hebrew, and the folder tree with a class label](docs/screenshot.png)
 
 ## Install
 
-On Windows 10 or 11: download the latest **`…_x64-setup.exe`** from [Releases](https://github.com/ariel-bentu/coolmus/releases) and run it. It installs for your user only (no administrator rights) and adds Coolmus to the Start menu; WebView2 is installed if it's missing. The installer isn't signed yet, so Windows may show *"Windows protected your PC"*: click **More info → Run anyway**.
-
-**Releasing a version:** `npm run release -- 0.2.0` (or `npm run release` for the version already in `app/tauri.conf.json`). It sets the version, pushes `main` and a `v0.2.0` tag; GitHub Actions then runs the tests on Windows, builds the installers and attaches them to a draft release to review and publish. `npm run release:watch` follows the build. The other shortcuts in `package.json` (`dev`, `test`, `build:windows`, `push`) are plain cargo and git commands; npm is only a launcher for them.
+On Windows 10 or 11: download the latest **`…_x64-setup.exe`** from [Releases](https://github.com/ariel-bentu/coolmus/releases) and run it. It installs for your user only (no administrator rights), in Hebrew or English, and adds Coolmus to the Start menu; WebView2 is installed if it's missing. The installer isn't signed yet, so Windows may show *"Windows protected your PC"*: click **More info → Run anyway**.
 
 ## Features
 
-- **Hebrew first, right to left.** The interface is in Hebrew with a mirrored right-to-left layout. One click switches to English (left to right). Hebrew and English can be mixed in names, tags, text boxes and search.
-- **Pen input with pressure.** Windows Ink pens report pressure, and it changes the stroke width; the pen's eraser button also erases. While the pen touches the screen, touches from your palm are ignored. Every input sample is processed (coalesced pointer events), so fast strokes stay smooth. Touch pans and pinch-zooms by default; drawing with a finger can be turned on in Settings.
-- **Pens.** Pick a color from the palette or a full color picker, set the width, and choose a style: Solid, Dashed, Dotted, Highlighter (drawn under the ink) or Pencil.
-- **Live diagrams.** With the **Select** tool, tap an item or drag a rectangle around several, then move them, resize them from the corner handle, duplicate or delete them. With something selected, the color, width, style and text-size controls change the selection.
-- **Text boxes.** With the **Text** tool, tap anywhere on the page and type. Each paragraph follows its own language direction. Double-tap a text box (Select tool) to edit it; drag its corner to change its width.
-- **Pictures.** Add a picture from a file or the photo gallery, take one with the camera, paste one (Ctrl+V), or drop an image file on the page. Large photos are scaled down so page files stay small.
-- **A4 sheets, several per file.** A page file is a stack of A4 sheets; *Add page* in the page menu adds one, and each sheet is a page in the PDF and in print. Ink stays on the paper: strokes start only on a sheet and are cut at its edges, and the page never grows by itself. Scrolling stops at the first sheet's top and the last sheet's bottom, and a page narrower than the window stays centered.
-- **Paper.** Blank, Lined, Grid or Dotted paper per page.
-- **Your folders, as they are on disk.** Add one or more folders (for example `Documents\Coolmus` and a folder inside OneDrive); the sidebar shows them with their real subfolders and files. Create, rename, move (drag and drop between any of them, or *Move to folder…*) and delete pages and folders. Deleted items go to the Recycle Bin.
-- **Copy and paste with File Explorer.** Copy (Ctrl+C) a page or folder in Coolmus and paste it in Explorer, or copy files in Explorer and paste them into a Coolmus folder. Cut (Ctrl+X) and paste within Coolmus moves.
-- **Draw on any PDF.** Other PDFs in your folders (worksheets, scans, slides) open in Coolmus with their pages as the paper. What you add is a layer on top: the PDF's own content is never changed, and everyone still sees the PDF with your notes in any viewer.
-- **Print** a page (Ctrl+P), or all pages of a folder.
-- **Import from OneNote files.** Right-click a folder → *Import from OneNote…* and pick a notebook's `Open Notebook.onetoc2` or a single section `.one`. See below.
-- **Calculated folder labels.** A folder can keep a fixed name (for example `class of 2021`) and show a label calculated from the date, for example `כיתה ג-3` this school year and `כיתה ד-3` from next September. See below.
-- **Tags and search.** Add tags to a page; existing tags are suggested as you type. Search by name and `#tag` together, for example `bridge #work`.
-- **Saves automatically,** about a second after you stop drawing. Files are written atomically, so a crash never corrupts a page.
-- **Export a page as a PNG image.**
+**Writing and drawing**
+
+- **Hebrew first, right to left.** The interface is in Hebrew with a mirrored right-to-left layout; one click switches to English. Hebrew and English mix freely in names, tags, text boxes and search, and text fields start on the right in Hebrew.
+- **Pen input with pressure.** Windows Ink pens report pressure, and it changes the stroke width; the pen's eraser button erases. While the pen touches the screen, your palm is ignored. Every input sample is used, so fast strokes stay smooth, and *Stroke smoothing* in Settings evens out a shaky hand. Touch pans and pinch-zooms; drawing with a finger can be turned on in Settings.
+- **Pens.** Ten colors on the toolbar, and the color button opens a panel with 96 more and your last 5 custom colors. Set the width and the style: Solid, Dashed, Dotted, Highlighter (drawn under the ink, 5× wider than the pen) or Pencil.
+- **An eraser that erases where it passes.** It cuts strokes at its edge and leaves the rest; passing over a text's letters removes that text box. Each drag is one undo step.
+- **Select, move, resize.** With the **Select** tool, tap an item or drag a rectangle around several, then move, resize (corner handle), duplicate or delete them. With something selected, the color, width, style and text-size controls change it.
+- **Text boxes.** With the **Text** tool, tap and type; in Hebrew the tap is the box's right edge. Each paragraph follows its own language. While you type, the toolbar shows the box's color and size, and changing them changes the text; drag the ✥ handle at the box's corner to move it. Double-tap a text box (Select tool) to edit it again.
+- **Pictures** from a file or the photo gallery, the camera, the clipboard (Ctrl+V), or dropped on the page. Large photos are scaled down so files stay small.
+- **A4 sheets, several per file.** *Add page* in the page menu adds a sheet; each sheet is a page in the PDF and in print. Ink stays on the paper and the page never grows by itself; scrolling stops at the first sheet's top and the last sheet's bottom. Blank, Lined, Grid or Dotted paper.
+- **Write on any PDF.** Other PDFs in your folders (worksheets, scans, slides) open with their pages as the paper. What you add is a layer on top: the PDF's own content never changes, and everyone still sees the PDF with your notes in any viewer.
+
+**Pages and folders**
+
+- **Your folders, as they are on disk.** Add one or more folders (for example `Documents\Coolmus` and a folder inside OneDrive); the sidebar shows their real subfolders and files. A folder can also show its contents directly at the top of the list, without its own row.
+- **Everything in reach.** Hovering over a folder or file shows a ⋮ button (new page, new folder, rename, delete for folders; print, open, copy, move, rename, delete for files); right-click has the full menu. Every menu has an ✕, so a pen never needs right-click or Esc.
+- **Move and copy.** Drag pages and folders between any of your folders. Copy (Ctrl+C) a page or folder and paste it in File Explorer, or copy files there and paste them here; drag files or whole folders from Explorer onto a folder to copy them in. Deleted items go to the Recycle Bin.
+- **Calculated folder labels.** A folder can keep a fixed name (for example `class of 2021`) and show a label calculated from the date: `כיתה ג-3` this school year, `כיתה ד-3` from next September. See below.
+- **Tags and search.** Add tags to a page (existing ones are suggested) and search by name and `#tag` together, for example `bridge #work`.
+- **Import from OneNote,** several notebooks or sections at once, with progress as it goes. See below.
+- **Print** a page (Ctrl+P) or all the pages in a folder, through the system print dialog. **Export** a page as a PNG image.
+
+**Around the page**
+
+- **Always saved.** Changes are saved 3 seconds after you stop, and files are written atomically, so a crash never corrupts a page.
+- **Where you are.** The status bar shows the page's folder path (with the folders' labels) and *page 2 of 3*; next to the title is when the page was last edited (*today 14:32*, *yesterday*, *3 days ago*, or the date), which changes only when its content does.
+- **Picks up where you left off.** Each page reopens at the zoom and position you left it at (remembered on this computer).
+- **Room to write.** Drag the sidebar's edge to resize it, hide it with Ctrl+B, or go full page (F) so the whole screen is paper.
 
 ### Shortcuts
 
@@ -41,14 +52,16 @@ On Windows 10 or 11: download the latest **`…_x64-setup.exe`** from [Releases]
 | Ctrl+S | Save now |
 | Ctrl+N | New page in the selected folder |
 | Ctrl+0 | Fit the page width |
-| F, Esc | Full page on and off |
+| Ctrl+B | Show or hide the folder list |
+| F | Full page on and off |
+| Esc | Close a menu, clear the selection, or leave full page |
 | Space + drag | Pan |
 
 ## Where your pages live
 
 Coolmus shows the folders you add in ⚙ Settings (by default `Documents\Coolmus`), exactly as they are on disk. There is no separate index or database: you can copy, back up or reorganize them in Explorer, and Coolmus picks up the changes. A folder inside OneDrive is synced by OneDrive. Removing a folder from the list doesn't touch it on disk.
 
-Each page is one file, `<page name>.pdf`, so the page's name is the file's name. It is a normal one-page PDF, drawn as vectors: the paper, the ink (pressure-width strokes as filled outlines), pictures, and text boxes as real, selectable and searchable text with the system font embedded. Inside, as a PDF attachment named `coolmus-page.json`, it carries the page itself:
+Each page is one file, `<page name>.pdf`, so the page's name is the file's name. It is an ordinary PDF with one PDF page per sheet, drawn as vectors: the paper, the ink (pressure-width strokes as filled outlines), pictures, and text boxes as real, selectable and searchable text with the system font embedded. Inside, as a PDF attachment named `coolmus-page.json`, it carries the page itself:
 
 ```jsonc
 {
@@ -74,7 +87,7 @@ A folder with a calculated label also contains a hidden `.coolmus-folder.json`, 
 
 Coolmus reads OneNote's own files, so no Microsoft sign-in is needed. Get them by downloading a notebook from OneDrive (a `.zip` with one `.one` per section and an `Open Notebook.onetoc2`; if the web page offers no download, OneNote for Windows can export a section or notebook too), or use the `.one` files OneNote desktop keeps.
 
-Pick `Open Notebook.onetoc2` to import a whole notebook, or one `.one` file for a single section. The notebook becomes a folder, each section group and section a subfolder, and each page a page file named after its title. OneNote's recycle bin is skipped. The import is a copy: the OneNote files are not changed.
+Right-click a folder → *Import from OneNote…* and pick one or more files: `Open Notebook.onetoc2` for a whole notebook, or `.one` files for single sections. Each becomes its own folder in the folder you chose, named after the notebook or the section file, with a subfolder per section group and section and a page file per page, named after its title. The status bar shows which file is being imported and the page count as it goes; a file that can't be read doesn't stop the others. OneNote's recycle bin is skipped. The import is a copy: the OneNote files are not changed.
 
 - **Ink** becomes ordinary strokes with its color and width; highlighters stay highlighters. OneNote's files don't keep pen pressure, so imported strokes have an even width.
 - **Typed text** becomes text boxes at the same places, with its size and color. Tables become one line per row.
@@ -104,12 +117,15 @@ crates/onenote-import OneNote .one / .onetoc2 files → Coolmus pages (via oneno
 crates/coolmus-store   The root folders: tree scan, page files, rename/move/copy/trash, tag index,
                       folder labels.
 app/                  Tauri 2 desktop shell (Rust): commands over the crates above, system
-                      clipboard file lists, printing, settings.
+                      clipboard file lists, file drops, OneNote import progress, settings.
+                      icons/ (icon.svg, generated by feather.py), installer/ (Hebrew installer text).
 app/ui/               The interface: plain HTML/CSS/JavaScript with no build step.
-                      canvas.js (input, drawing, selection, text editing), tree.js (folders),
-                      media.js (pictures and camera), labels.js (calculated folder labels),
-                      export.js (PNG and printing), background.js (another PDF under a page,
-                      rendered with pdf.js from vendor/pdfjs), i18n.js.
+                      canvas.js (input, drawing, eraser, selection, text editing), ink.js (stroke
+                      geometry, hit-testing, cutting strokes), tree.js (folders), ui.js (menus,
+                      dialogs), media.js (pictures and camera), labels.js (calculated folder
+                      labels), export.js (PNG and printing), background.js (another PDF under a
+                      page, rendered with pdf.js from vendor/pdfjs), i18n.js (Hebrew, English).
+.github/workflows/    release.yml: builds and drafts a Windows release for each version tag.
 ```
 
 `coolmus-core` doesn't depend on any other crate here. The interface only talks to the backend through Tauri commands, and all paths it sends are checked so they can't leave the folders you added.
@@ -120,7 +136,7 @@ app/ui/               The interface: plain HTML/CSS/JavaScript with no build ste
 
 ## Building
 
-You need Rust 1.85 or later. On Windows, also install the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/); it comes preinstalled on Windows 10 and 11. No Node.js or npm is needed.
+You need Rust 1.85 or later. On Windows, also install the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/); it comes preinstalled on Windows 10 and 11. Node.js isn't needed to build or run the app.
 
 ```powershell
 cargo run --release -p coolmus        # run
@@ -128,7 +144,9 @@ cargo build --release -p coolmus      # target\release\coolmus.exe
 cargo test --workspace
 ```
 
-To build an installer (.msi or setup.exe), install the Tauri CLI with `cargo install tauri-cli --version "^2"`, then run `cargo tauri build` inside `app/`.
+To build an installer (.msi or setup.exe), install the Tauri CLI with `cargo install tauri-cli --version "^2"`, then run `cargo tauri build` inside `app/`. On a Mac, `scripts/build-windows.sh` cross-compiles the Windows installer (its header lists the one-time setup).
+
+**Releasing a version:** `npm run release -- 0.2.0` (or `npm run release` for the version already in `app/tauri.conf.json`). It sets the version, pushes `main` and a `v0.2.0` tag; GitHub Actions then runs the tests on Windows, builds the installers and attaches them to a draft release to review and publish. `npm run release:watch` follows the build. The other shortcuts in `package.json` (`dev`, `test`, `build:windows`, `push`) are plain cargo and git commands; npm only launches them, and nothing needs installing. The GitHub login needs the `workflow` scope (`gh auth refresh -h github.com -s workflow`).
 
 Release builds on Windows don't open a console window. The app also builds and runs on macOS and Linux, which is handy for development.
 
