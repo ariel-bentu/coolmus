@@ -322,7 +322,9 @@ export class SketchCanvas {
       ta.style.height = ta.scrollHeight + 2 + 'px';
     };
     ta.addEventListener('input', grow);
-    ta.addEventListener('blur', () => this.endTextEdit());
+    // Using the toolbar (a color, the text size) keeps the box open: those apply to
+    // it. WebKit doesn't focus a clicked slider, so the app also flags such presses.
+    ta.addEventListener('blur', (e) => this.holdEdit || e.relatedTarget?.closest?.('#toolbar, #menu') || this.endTextEdit());
     ta.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -333,9 +335,26 @@ export class SketchCanvas {
     ta.addEventListener('pointerdown', (e) => e.stopPropagation());
     this.textLayer.append(ta);
     this.editing = { box, ta };
+    this.selectionChanged(); // the toolbar shows this text's color and size
     this.requestRender();
     grow();
     ta.focus();
+  }
+
+  /**
+   * Applies a color or size to the text box being typed in, and gives it the
+   * focus back unless `focus` is false (e.g. while a slider is still moving).
+   * False if no box is open.
+   */
+  restyleEditing({ color, size }, { focus = true } = {}) {
+    const e = this.editing;
+    if (!e || (!color && !size)) return false;
+    e.box = { ...e.box, ...(color && { color }), ...(size && { size }) };
+    Object.assign(e.ta.style, { color: colorCss(e.box.color), fontSize: e.box.size + 'px' });
+    e.ta.dispatchEvent(new Event('input')); // re-fit its height
+    if (focus) e.ta.focus();
+    this.selectionChanged();
+    return true;
   }
 
   endTextEdit() {
@@ -349,12 +368,15 @@ export class SketchCanvas {
     if (box.id) {
       const old = p.texts.find((x) => x.id === box.id);
       if (!text) this.onCommit({ texts: p.texts.filter((x) => x.id !== box.id) });
-      else if (old && old.text !== text) this.onCommit({ texts: p.texts.map((x) => (x.id === box.id ? { ...x, text } : x)) });
+      else if (old && (old.text !== text || colorCss(old.color) !== colorCss(box.color) || old.size !== box.size)) {
+        this.onCommit({ texts: p.texts.map((x) => (x.id === box.id ? { ...x, text, color: box.color, size: box.size } : x)) });
+      }
     } else if (text) {
       this.onCommit({ texts: [...p.texts, { ...box, id: uid(), text }] });
     }
     this.textsRef = null;
     this.requestRender();
+    this.selectionChanged(); // back to the pen's color and size
   }
 
   // ---------- rendering ----------
@@ -843,6 +865,7 @@ export class SketchCanvas {
       this.drawTop();
     } else if (g.kind === 'erase') {
       for (const s of samples.length ? samples : [e]) this.eraseAt(s);
+      this.drawTop(); // the eraser circle stands in for the hidden cursor
     } else if (g.kind === 'pan') {
       const p = this.local(e);
       this.ox += p.x - g.last.x;

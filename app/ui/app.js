@@ -826,8 +826,10 @@ function renderToolbar() {
   const selecting = state.tool === 'select' && sel.strokes.length + sel.texts.length + sel.images.length > 0;
   document.querySelectorAll('.tool').forEach((b) => b.classList.toggle('on', b.dataset.tool === state.tool));
   $('stage').className = state.tool === 'pen' ? '' : state.tool;
-  // With a selection, the pen controls show (and change) the selected ink.
-  const shown = selecting && sel.strokes.length ? sel.strokes[0].pen : selecting && sel.texts.length ? { ...pen, color: sel.texts[0].color } : pen;
+  // A text box being typed in, or a selection, shows (and is changed by) the
+  // pen controls; otherwise they show the pen.
+  const editing = canvas.editing?.box;
+  const shown = editing ? { ...pen, color: editing.color } : selecting && sel.strokes.length ? sel.strokes[0].pen : selecting && sel.texts.length ? { ...pen, color: sel.texts[0].color } : pen;
   const hex = colorToHex(shown.color);
   $('swatches').querySelectorAll('.swatch').forEach((s) => s.classList.toggle('on', s.dataset.color === hex));
   // The color button shows a custom color; for the toolbar's own it shows a rainbow.
@@ -840,8 +842,8 @@ function renderToolbar() {
   $('pressure').classList.toggle('on', pen.pressure_sensitive);
   $('eraserGroup').hidden = state.tool !== 'eraser';
   $('eraserSize').value = canvas.eraserRadius;
-  const textSize = selecting && sel.texts.length ? sel.texts[0].size : state.settings.textSize;
-  $('textGroup').hidden = !(state.tool === 'text' || (selecting && sel.texts.length));
+  const textSize = editing ? editing.size : selecting && sel.texts.length ? sel.texts[0].size : state.settings.textSize;
+  $('textGroup').hidden = !(state.tool === 'text' || editing || (selecting && sel.texts.length));
   $('textSize').value = textSize;
   $('textSizeOut').textContent = Math.round(textSize);
   canvas.pen = pen;
@@ -980,6 +982,8 @@ function openSettings() {
 /** Pen controls change the selection when there is one, else the pen. */
 function penChange(props, { switchToPen = true } = {}) {
   if (state.tool === 'select' && canvas.restyleSelection(props)) return renderToolbar();
+  // Typing in a text box: the color goes to it (and stays the pen's for the next one).
+  if (canvas.restyleEditing(props)) switchToPen = false;
   Object.assign(state.settings.pen, props);
   if (switchToPen && state.tool !== 'text') setTool('pen');
   renderToolbar();
@@ -1074,9 +1078,13 @@ function bind() {
     saveSettings();
   });
   $('eraserSize').addEventListener('input', (e) => (canvas.eraserRadius = Number(e.target.value)));
-  $('textSize').addEventListener('input', (e) => ($('textSizeOut').textContent = e.target.value));
+  $('textSize').addEventListener('input', (e) => {
+    $('textSizeOut').textContent = e.target.value;
+    canvas.restyleEditing({ size: Number(e.target.value) }, { focus: false }); // live, while dragging
+  });
   $('textSize').addEventListener('change', (e) => {
     const size = Number(e.target.value);
+    canvas.restyleEditing({ size });
     if (!(state.tool === 'select' && canvas.restyleSelection({ size }))) {
       state.settings.textSize = size;
       saveSettings();
@@ -1188,6 +1196,20 @@ function bind() {
   // Copy and paste act on the tree after clicking in it, else on the page.
   $('sidebar').addEventListener('pointerdown', () => (state.focus = 'tree'));
   bindTreeSpace(treeCtx);
+  // While a text box is being typed in, toolbar and menu buttons don't take
+  // the focus from it, so a color picked there applies to that text.
+  for (const id of ['toolbar', 'menu']) {
+    $(id).addEventListener('mousedown', (e) => canvas.editing && !e.target.closest('input') && e.preventDefault());
+    // A slider can't keep the focus away like that, so the box is told to stay
+    // open until the press is over.
+    $(id).addEventListener('pointerdown', () => {
+      if (!canvas.editing) return;
+      canvas.holdEdit = true;
+      const release = () => setTimeout(() => (canvas.holdEdit = false));
+      window.addEventListener('pointerup', release, { once: true });
+      window.addEventListener('pointercancel', release, { once: true });
+    }, true);
+  }
   $('stage').addEventListener('pointerdown', () => (state.focus = 'page'));
   document.addEventListener('paste', (e) => {
     if (typing() || !state.current || state.focus === 'tree') return;
