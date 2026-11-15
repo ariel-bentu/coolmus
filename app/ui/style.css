@@ -148,8 +148,11 @@ details .children { padding-inline-start: 16px; }
 #tree .row.missing { opacity: 0.55; }
 #tree .row.sel { background: var(--hover); }
 #tree .pdf .ico svg { color: #c5221f; }
-.rootRow { display: flex; gap: 8px; align-items: center; }
-.rootRow .path { flex: 1; }
+.rootRow { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
+/* The path, the option and the links each get a line. */
+.rootRow .path { flex: 1 0 100%; text-align: start; }
+html[dir=rtl] .rootRow .path { text-align: right; }
+.rootRow label { flex: 1 0 100%; display: flex; align-items: center; gap: 6px; }
 #tree .row.drop { outline: 2px dashed var(--accent); outline-offset: -2px; }
 #tree .ico svg { width: 17px; height: 17px; color: var(--muted); }
 #tree .folder .ico svg { color: #d9a400; fill: rgba(249, 212, 0, 0.25); }

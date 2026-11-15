@@ -11,6 +11,9 @@ pub struct Settings {
     /// Folders shown in the tree, in order; empty means the default
     /// (`Documents/Coolmus`).
     pub roots: Vec<String>,
+    /// Roots (as tree paths, "/"-separated) whose contents the tree shows at
+    /// the top level instead of under the root's own row.
+    pub flat_roots: Vec<String>,
     pub smoothing: f32,
     pub pen: Pen,
     /// UI language: "he" (right-to-left) or "en".
@@ -23,7 +26,7 @@ pub struct Settings {
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { roots: Vec::new(), smoothing: 0.35, pen: Pen::default(), language: "he".into(), touch_draws: false, text_size: 20.0 }
+        Self { roots: Vec::new(), flat_roots: Vec::new(), smoothing: 0.35, pen: Pen::default(), language: "he".into(), touch_draws: false, text_size: 20.0 }
     }
 }
 

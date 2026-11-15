@@ -6,7 +6,7 @@ import { setLanguage, t, translateDom, getLanguage } from './i18n.js';
 import { SketchCanvas, colorCss } from './canvas.js';
 import { bounds, sheetCount, sheetTop, SHEET_GAP } from './ink.js';
 import { $, el, bdi, error, modal, prompt, confirmDialog, showMenu, showPanel, hideMenu } from './ui.js';
-import { renderTree, allFolders, findNode, parentOf, baseName, isInside } from './tree.js';
+import { renderTree, allFolders, findNode, parentOf, baseName, isInside, isFlat, bindTreeSpace } from './tree.js';
 import { pagePng, printSheets } from './export.js';
 import * as bg from './background.js';
 import { fromBlob, pickFile, takePhoto } from './media.js';
@@ -125,7 +125,8 @@ function folderParts(path) {
     const node = findNode(state.tree, at);
     parts.push(labelText(node?.label) || node?.name || name);
   }
-  return parts;
+  // A root shown flat isn't in the tree, so it isn't in the path either.
+  return isFlat(state, root.path) && parts.length > 1 ? parts.slice(1) : parts;
 }
 
 /** "Root › sub › folder" for a folder path. */
@@ -424,6 +425,7 @@ const treeCtx = {
   folderLabel,
   folderPath: (path) => pathNodes(folderParts(path)),
   dropFiles,
+  toggleFlat,
   saveOpenFolders,
 };
 
@@ -754,8 +756,21 @@ async function addRoot() {
   return tr;
 }
 
+/** Shows a root's contents at the top level of the tree, or the root itself again. */
+function toggleFlat(root) {
+  const flat = new Set(state.settings.flatRoots ?? []);
+  if (!flat.delete(root.path)) flat.add(root.path);
+  state.settings.flatRoots = [...flat];
+  state.openFolders.add(root.path);
+  saveSettings();
+  saveOpenFolders();
+  renderSidebar();
+  renderStatus();
+}
+
 async function removeRoot(node) {
   if (!(await confirmDialog(t('confirmRemoveRoot', node.name), t('removeRootSub'), t('removeRoot')))) return;
+  if (isFlat(state, node.path)) toggleFlat(node);
   if (state.current && isInside(state.current.path, node.path)) {
     await saveNow();
     closePage();
@@ -925,7 +940,8 @@ function openSettings() {
       roots.replaceChildren(
         ...state.tree.map((r) =>
           el('div', { class: 'pathRow rootRow' },
-            el('bdi', { class: 'path', text: r.path }),
+            el('bdi', { class: 'path', dir: 'ltr', text: r.path }),
+            el('label', {}, el('input', { type: 'checkbox', checked: isFlat(state, r.path), onchange: () => toggleFlat(r) }), t('flatRoot')),
             el('button', { class: 'link', text: t('revealFolder'), onclick: () => call('reveal', { path: r.path }) }),
             el('button', { class: 'link', text: t('removeRoot'), onclick: async () => { d.close(); await removeRoot(r); } }),
           ),
@@ -1171,6 +1187,7 @@ function bind() {
   // Pictures and text from the clipboard, and image files dropped on the page.
   // Copy and paste act on the tree after clicking in it, else on the page.
   $('sidebar').addEventListener('pointerdown', () => (state.focus = 'tree'));
+  bindTreeSpace(treeCtx);
   $('stage').addEventListener('pointerdown', () => (state.focus = 'page'));
   document.addEventListener('paste', (e) => {
     if (typing() || !state.current || state.focus === 'tree') return;

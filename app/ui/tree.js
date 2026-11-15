@@ -16,6 +16,9 @@ export const parentOf = (path) => (path.includes('/') ? path.slice(0, path.lastI
 export const baseName = (path) => path.slice(path.lastIndexOf('/') + 1).replace(/\.pdf$/i, '');
 export const isInside = (path, folder) => path === folder || path.startsWith(folder + '/');
 
+/** True if the root at `path` shows its contents at the top level of the tree. */
+export const isFlat = (state, path) => (state.settings?.flatRoots ?? []).includes(path);
+
 /** Roots and folders, depth-first, as { path, name, depth } (name: the label if there is one). */
 export function allFolders(nodes, depth = 0, out = []) {
   for (const n of nodes) {
@@ -40,7 +43,7 @@ export function findNode(nodes, path) {
  * { state, open(node), newPage(folder), newFolder(parent), rename(node),
  *   move(node), moveTo(path, folder), remove(node), editLabel(node),
  *   reveal(path), openExternal(path), copy(node), cut(node), paste(folder),
- *   print(node), importOneNote(folder), removeRoot(node), dropFiles(entries, folder), folderLabel(path), folderPath(path), select(node), saveOpenFolders() }
+ *   print(node), importOneNote(folder), removeRoot(node), toggleFlat(root), dropFiles(entries, folder), folderLabel(path), folderPath(path), select(node), saveOpenFolders() }
  */
 export async function renderTree(ctx) {
   const { state } = ctx;
@@ -65,7 +68,9 @@ export async function renderTree(ctx) {
   const rows = [];
   const walk = (nodes, depth) => {
     for (const n of nodes) {
-      if (n.kind === 'folder' || n.kind === 'root') {
+      // A root set to show its contents at the top level has no row of its own.
+      if (n.kind === 'root' && isFlat(state, n.path)) walk(n.children ?? [], depth);
+      else if (n.kind === 'folder' || n.kind === 'root') {
         const open = state.openFolders.has(n.path);
         rows.push(folderRow(ctx, n, depth, open));
         if (open) walk(n.children ?? [], depth + 1);
@@ -123,7 +128,17 @@ function folderRow(ctx, node, depth, open) {
     state.folder = node.path;
     ctx.select(node);
     renderTree(ctx);
-    showMenu(e.clientX, e.clientY, [
+    folderMenu(ctx, node, e.clientX, e.clientY);
+  });
+  dropTarget(ctx, row, node.path);
+  if (!isRoot) dragSource(row, node.path);
+  return row;
+}
+
+/** The menu for a folder or root (also for a root shown flat, from the tree's empty space). */
+export function folderMenu(ctx, node, x, y) {
+  const isRoot = node.kind === 'root';
+  showMenu(x, y, [
       { text: t('newPageHere'), action: () => ctx.newPage(node.path) },
       { text: t('newFolderHere'), action: () => ctx.newFolder(node.path) },
       { text: t('pasteItems'), action: () => ctx.paste(node.path) },
@@ -136,15 +151,12 @@ function folderRow(ctx, node, depth, open) {
       { text: t('folderLabelMenu'), action: () => ctx.editLabel(node) },
       { text: t('printFolder'), action: () => ctx.print(node) },
       { text: t('revealFolder'), action: () => ctx.reveal(node.path) },
+      isRoot && { text: (isFlat(ctx.state, node.path) ? '✓ ' : '') + t('flatRoot'), action: () => ctx.toggleFlat(node) },
       '-',
       isRoot
         ? { text: t('removeRoot'), action: () => ctx.removeRoot(node) }
         : { text: t('delete'), danger: true, action: () => ctx.remove(node) },
-    ]);
-  });
-  dropTarget(ctx, row, node.path);
-  if (!isRoot) dragSource(row, node.path);
-  return row;
+  ]);
 }
 
 function fileRow(ctx, node, depth) {
@@ -199,25 +211,54 @@ function dragSource(row, path) {
   });
 }
 
-/** Drops onto `folder`: a tree item moves there, files from Finder or Explorer are copied in. */
+const accepts = (e) => e.dataTransfer.types.includes(DRAG_TYPE) || e.dataTransfer.types.includes('Files');
+
+/** A drop onto `folder`: a tree item moves there, files from Finder or Explorer are copied in. */
+function drop(ctx, e, folder) {
+  e.preventDefault();
+  const path = e.dataTransfer.getData(DRAG_TYPE);
+  if (path) return ctx.moveTo(path, folder);
+  // The entries must be taken now: the drop's data is gone once it returns.
+  const entries = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
+  ctx.dropFiles(entries, folder);
+}
+
+function dragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
+}
+
 function dropTarget(ctx, row, folder) {
-  const accepts = (e) => e.dataTransfer.types.includes(DRAG_TYPE) || e.dataTransfer.types.includes('Files');
   row.addEventListener('dragover', (e) => {
     if (!accepts(e)) return;
-    e.preventDefault();
-    e.dataTransfer.dropEffect = e.dataTransfer.types.includes('Files') ? 'copy' : 'move';
+    dragOver(e);
     row.classList.add('drop');
   });
   row.addEventListener('dragleave', () => row.classList.remove('drop'));
   row.addEventListener('drop', (e) => {
     row.classList.remove('drop');
-    if (!accepts(e)) return;
+    if (accepts(e)) drop(ctx, e, folder);
+  });
+}
+
+/**
+ * The tree's empty space stands for a root shown flat, whose own row is
+ * hidden: right-click there for its menu, drop there to put things in it.
+ */
+export function bindTreeSpace(ctx) {
+  const tree = $('tree');
+  const flatRoot = (e) => (e.target.closest('.row, .result') ? null : ctx.state.tree.find((r) => isFlat(ctx.state, r.path)));
+  tree.addEventListener('contextmenu', (e) => {
+    const root = flatRoot(e);
+    if (!root) return;
     e.preventDefault();
-    const path = e.dataTransfer.getData(DRAG_TYPE);
-    if (path) return ctx.moveTo(path, folder);
-    // The entries must be taken now: the drop's data is gone once it returns.
-    const entries = [...e.dataTransfer.items].map((i) => i.webkitGetAsEntry?.()).filter(Boolean);
-    ctx.dropFiles(entries, folder);
+    ctx.state.folder = root.path;
+    folderMenu(ctx, root, e.clientX, e.clientY);
+  });
+  tree.addEventListener('dragover', (e) => flatRoot(e) && accepts(e) && dragOver(e));
+  tree.addEventListener('drop', (e) => {
+    const root = flatRoot(e);
+    if (root && accepts(e)) drop(ctx, e, root.path);
   });
 }
 
