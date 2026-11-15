@@ -85,7 +85,7 @@ A folder with a calculated label also contains a hidden `.coolmus-folder.json`, 
 
 ### Importing from OneNote
 
-Coolmus reads OneNote's own files, so no Microsoft sign-in is needed. Get them by downloading a notebook from OneDrive (a `.zip` with one `.one` per section and an `Open Notebook.onetoc2`; if the web page offers no download, OneNote for Windows can export a section or notebook too), or use the `.one` files OneNote desktop keeps.
+Coolmus reads OneNote's own files, so no Microsoft sign-in is needed. To get a notebook from OneDrive: OneDrive on the web offers no *Download* for a notebook itself, but it does for the **folder that contains it**. Select that folder (move the notebook into a folder first if it's at the top level) and choose *Download*. You get a `.zip` with the notebook's `Open Notebook.onetoc2` and one `.one` file per section; unzip it. OneNote for Windows can also export a section or notebook, and the `.one` files OneNote desktop keeps work too.
 
 Right-click a folder → *Import from OneNote…* and pick one or more files: `Open Notebook.onetoc2` for a whole notebook, or `.one` files for single sections. Each becomes its own folder in the folder you chose, named after the notebook or the section file, with a subfolder per section group and section and a page file per page, named after its title. The status bar shows which file is being imported and the page count as it goes; a file that can't be read doesn't stop the others. OneNote's recycle bin is skipped. The import is a copy: the OneNote files are not changed.
 
