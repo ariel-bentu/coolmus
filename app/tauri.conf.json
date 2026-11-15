@@ -25,6 +25,19 @@
   },
   "bundle": {
     "active": true,
+    "publisher": "Ariel Bentolila",
+    "copyright": "© 2026 Ariel Bentolila. MIT License.",
+    "shortDescription": "Pen notebook where every page is a PDF",
+    "longDescription": "Coolmus is a pen notebook for Windows: every page is a PDF in your own folders, you can write on any PDF, and OneNote notebooks can be imported.",
+    "homepage": "https://github.com/ariel-bentu/coolmus",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["Hebrew", "English"],
+        "displayLanguageSelector": true,
+        "customLanguageFiles": { "Hebrew": "installer/Hebrew.nsh" }
+      }
+    },
     "targets": [
       "nsis",
       "msi"

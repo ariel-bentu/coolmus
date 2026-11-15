@@ -1,0 +1,51 @@
+name: Release
+
+# Builds the Windows installers and attaches them to a draft GitHub Release.
+# Start it by pushing a tag that matches the version in app/tauri.conf.json:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# Review the draft on the Releases page, then publish it.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Build installers and draft the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tagName: v__VERSION__
+          releaseName: Coolmus v__VERSION__
+          releaseDraft: true
+          prerelease: false
+          releaseBody: |
+            ## Install on Windows
+
+            1. Download the file ending in **_x64-setup.exe** below (the `.msi` is for IT-managed installs).
+            2. Run it. It installs for your user only, no administrator rights needed, and adds Coolmus to the Start menu.
+            3. Windows may say *"Windows protected your PC"*, because the installer isn't signed yet: click **More info → Run anyway**.
+
+            ## התקנה ב-Windows
+
+            1. מורידים מהרשימה למטה את הקובץ שמסתיים ב-**_x64-setup.exe**.
+            2. מפעילים אותו. ההתקנה היא למשתמש הנוכחי בלבד, בלי הרשאות מנהל, וקולמוס מתווסף לתפריט התחל.
+            3. אם Windows מציג *"Windows protected your PC"* (המתקין עדיין לא חתום): לוחצים על **More info** ואז **Run anyway**.

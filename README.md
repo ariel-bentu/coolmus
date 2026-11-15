@@ -2,6 +2,12 @@
 
 A fast pen-sketching app for Windows. Every page is an ordinary **PDF file** in your own folders: anyone can open it in any PDF viewer, and in Coolmus its vector ink, text boxes and pictures stay fully editable.
 
+## Install
+
+On Windows 10 or 11: download the latest **`…_x64-setup.exe`** from [Releases](https://github.com/ariel-bentu/coolmus/releases) and run it. It installs for your user only (no administrator rights) and adds Coolmus to the Start menu; WebView2 is installed if it's missing. The installer isn't signed yet, so Windows may show *"Windows protected your PC"*: click **More info → Run anyway**.
+
+**Releasing a version:** set the version in `app/tauri.conf.json`, commit, then push a matching tag (`git tag v0.1.0 && git push origin v0.1.0`). GitHub Actions runs the tests on Windows, builds the installers and attaches them to a draft release to review and publish.
+
 ## Features
 
 - **Hebrew first, right to left.** The interface is in Hebrew with a mirrored right-to-left layout. One click switches to English (left to right). Hebrew and English can be mixed in names, tags, text boxes and search.
