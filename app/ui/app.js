@@ -860,6 +860,7 @@ function renderUndo() {
 function renderPage() {
   const c = state.current;
   $('title').value = c ? baseName(c.path) : '';
+  autoDirection($('title'));
   $('title').disabled = !c;
   $('tagInput').disabled = !c;
   renderTags();
@@ -1176,6 +1177,7 @@ function bind() {
       e.preventDefault();
       addTags(e.target.value);
       e.target.value = '';
+      autoDirection(e.target);
     }
   });
   $('tagInput').addEventListener('change', (e) => {
@@ -1183,6 +1185,7 @@ function bind() {
     if (state.tags.includes(e.target.value)) {
       addTags(e.target.value);
       e.target.value = '';
+      autoDirection(e.target);
     }
   });
   let searchTimer;
@@ -1196,6 +1199,10 @@ function bind() {
   // Copy and paste act on the tree after clicking in it, else on the page.
   $('sidebar').addEventListener('pointerdown', () => (state.focus = 'tree'));
   bindTreeSpace(treeCtx);
+  document.querySelectorAll('[data-dir="auto"]').forEach((f) => {
+    f.addEventListener('input', () => autoDirection(f));
+    f.addEventListener('change', () => autoDirection(f));
+  });
   // While a text box is being typed in, toolbar and menu buttons don't take
   // the focus from it, so a color picked there applies to that text.
   for (const id of ['toolbar', 'menu']) {
@@ -1278,8 +1285,18 @@ function bind() {
   });
 }
 
+/**
+ * Text fields marked data-dir="auto" take the direction of what is typed in
+ * them, and the interface's while empty, so the placeholder and the caret
+ * start on the right in Hebrew.
+ */
+function autoDirection(field) {
+  field.dir = field.value.trim() ? 'auto' : document.documentElement.dir || 'ltr';
+}
+
 function applyLanguage() {
   setLanguage(state.settings.language);
+  document.querySelectorAll('[data-dir="auto"]').forEach(autoDirection);
   translateDom();
   document.title = t('appName');
   renderToolbar();

@@ -114,6 +114,26 @@ function folderRow(ctx, node, depth, open) {
   row.append(el('span', { class: 'ico', html: FOLDER }), bdi(label || node.name));
   if (label) row.append(el('small', { class: 'techName' }, bdi(node.name)));
   if (node.missing) row.append(el('small', { class: 'techName', text: t('missingRoot') }));
+  // A ⋮ button, shown on hover and on the selected folder, for the common actions.
+  const btn = el('button', { class: 'rowMenu hover', title: t('moreActions'), html: DOTS });
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    state.folder = node.path;
+    ctx.select(node);
+    const r = btn.getBoundingClientRect();
+    showMenu(document.dir === 'rtl' ? r.left : r.right, r.bottom + 2, [
+      { text: t('newPageHere'), action: () => ctx.newPage(node.path) },
+      { text: t('newFolderHere'), action: () => ctx.newFolder(node.path) },
+      '-',
+      ...(isRoot
+        ? [{ text: t('removeRoot'), action: () => ctx.removeRoot(node) }]
+        : [
+            { text: t('rename'), action: () => ctx.rename(node) },
+            { text: t('delete'), danger: true, action: () => ctx.remove(node) },
+          ]),
+    ]);
+  });
+  row.append(btn);
   // Clicking selects the folder (where new pages go) and opens it; clicking
   // the selected, open folder again closes it.
   row.addEventListener('click', () => {
@@ -189,16 +209,15 @@ function fileRow(ctx, node, depth) {
     ctx.select(node);
     menu(e.clientX, e.clientY);
   });
-  // The open page gets a visible menu button (for touch, where there is no right click).
-  if (node.path === state.current?.path) {
-    const btn = el('button', { class: 'rowMenu', title: t('moreActions'), html: DOTS });
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const r = btn.getBoundingClientRect();
-      menu(document.dir === 'rtl' ? r.left : r.right, r.bottom + 2);
-    });
-    row.append(btn);
-  }
+  // A ⋮ button, shown on hover and on the open or selected file (touch has no hover).
+  const btn = el('button', { class: 'rowMenu hover', title: t('moreActions'), html: DOTS });
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    ctx.select(node);
+    const r = btn.getBoundingClientRect();
+    menu(document.dir === 'rtl' ? r.left : r.right, r.bottom + 2);
+  });
+  row.append(btn);
   dropTarget(ctx, row, parentOf(node.path));
   dragSource(row, node.path);
   return row;
@@ -275,6 +294,7 @@ function renderTagCloud(ctx) {
           const words = state.search.split(/\s+/).filter(Boolean);
           state.search = on ? words.filter((w) => w.toLowerCase() !== token.toLowerCase()).join(' ') : [...words, token].join(' ');
           $('search').value = state.search;
+          $('search').dispatchEvent(new Event('change')); // its direction follows the text
           renderTree(ctx);
         },
       }, bdi(token));

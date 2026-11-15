@@ -74,7 +74,7 @@
         <button id="newPageBtn" data-i18n-title="newPageTip"><svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M12 10v6M9 13h6"/></svg><span data-i18n="newPage"></span></button>
         <button id="newFolderBtn" data-i18n-title="newFolderTip"><svg viewBox="0 0 24 24"><path d="M3 6a1 1 0 011-1h5l2 2h9a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1z"/><path d="M12 10v6M9 13h6"/></svg><span data-i18n="newFolder"></span></button>
       </div>
-      <input id="search" type="search" dir="auto" data-i18n-placeholder="search" />
+      <input id="search" type="search" data-dir="auto" data-i18n-placeholder="search" />
       <div id="tagCloud"></div>
       <div id="tree"></div>
     </aside>
@@ -83,10 +83,10 @@
       <div id="pagebar">
         <div class="side">
           <div id="tags"></div>
-          <input id="tagInput" dir="auto" list="tagSuggestions" data-i18n-placeholder="addTag" />
+          <input id="tagInput" data-dir="auto" list="tagSuggestions" data-i18n-placeholder="addTag" />
           <datalist id="tagSuggestions"></datalist>
         </div>
-        <input id="title" dir="auto" data-i18n-placeholder="titlePlaceholder" data-i18n-title="titleTip" />
+        <input id="title" data-dir="auto" data-i18n-placeholder="titlePlaceholder" data-i18n-title="titleTip" />
         <div class="side end">
           <span id="spinner" class="spinner" hidden></span>
           <span id="edited" class="muted"></span>

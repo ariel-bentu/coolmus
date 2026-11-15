@@ -161,6 +161,9 @@ html[dir=rtl] .rootRow .path { text-align: right; }
   min-height: 0; padding: 2px; border-radius: 6px; display: inline-flex;
 }
 #tree .rowMenu:hover { background: var(--hover); }
+/* Rows show theirs on hover, or when open or selected (touch has no hover). */
+#tree .rowMenu.hover { visibility: hidden; }
+#tree .row:hover .rowMenu.hover, #tree .row.on .rowMenu.hover, #tree .row.sel .rowMenu.hover { visibility: visible; }
 #tree .rowMenu svg { width: 18px; height: 18px; fill: currentColor; stroke: none; }
 #sidebarResizer { width: 6px; margin-inline-start: -3px; margin-inline-end: -3px; cursor: col-resize; z-index: 1; touch-action: none; }
 #sidebarResizer:hover, #sidebarResizer.drag { background: var(--accent); opacity: 0.4; }
@@ -228,6 +231,9 @@ dialog .row { display: flex; gap: 8px; flex-wrap: wrap; }
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2); padding: 4px; min-width: 180px;
 }
 .menu button { display: flex; width: 100%; border: none; background: none; text-align: start; border-radius: 6px; }
+.menu .menuHead { display: flex; justify-content: flex-end; margin: -2px -2px 0; }
+.menu button.menuClose { width: auto; min-height: 0; padding: 3px; border-radius: 50%; color: var(--muted); }
+.menu button.menuClose svg { width: 16px; height: 16px; }
 .menu hr { border: none; border-block-start: 1px solid var(--border); margin: 4px 0; }
 .menu .label { color: var(--muted); font-size: 12px; padding: 4px 10px; }
 

@@ -74,9 +74,19 @@ export function confirmDialog(text, sub, action = t('delete')) {
 
 const escapeHtml = (s) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]);
 
+/** An ✕ at the top of every menu: easy to hit with a pen (no right click or Esc needed). */
+const closeRow = () =>
+  el('div', { class: 'menuHead' }, el('button', {
+    class: 'menuClose',
+    title: t('closeMenu'),
+    html: '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+    onclick: () => hideMenu(),
+  }));
+
 export function showMenu(x, y, items) {
   const m = $('menu');
   m.replaceChildren(
+    closeRow(),
     ...items.filter(Boolean).map((it) =>
       it === '-'
         ? el('hr')
@@ -97,7 +107,7 @@ export function showMenu(x, y, items) {
 /** Shows `content` (an element) in the popup menus use, at (x, y). */
 export function showPanel(x, y, content) {
   const m = $('menu');
-  m.replaceChildren(content);
+  m.replaceChildren(closeRow(), content);
   place(m, x, y);
 }
 
