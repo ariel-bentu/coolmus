@@ -4,10 +4,15 @@
 //! paper) and attaches the page's own JSON. Any PDF viewer shows the page;
 //! Sketcher reads the attachment back with [`read`] and edits it losslessly.
 //!
+//! A page drawn on a PDF from elsewhere keeps that PDF as it is and adds its
+//! own layer on top; see [`background`].
+//!
 //! The page dictionary carries a fingerprint of the content Sketcher drew. If
 //! another program changed what is visible (redrew the page or added
 //! annotations), [`read`] reports it so the caller can keep those changes
 //! instead of silently overwriting them.
+
+mod background;
 
 use std::ops::Range;
 
@@ -27,10 +32,15 @@ use sketch_core::{Color, ImageItem, Page, Rect, TextBox};
 use sketch_render::paper::{self, Mark, PAPER_COLOR};
 use sketch_render::tessellate::outlines;
 
+pub use background::{background, strip, write_over};
+
 /// Name of the attached page data inside the PDF.
 pub const PAGE_FILE: &str = "sketcher-page.json";
 /// Page-dictionary key holding the fingerprint of the content Sketcher drew.
 const FINGERPRINT_KEY: &[u8] = b"SketcherContent";
+/// Page-dictionary key holding how many annotations the PDF had when Sketcher
+/// wrote it (a PDF from elsewhere may come with some).
+const ANNOTATIONS_KEY: &[u8] = b"SketcherAnnotations";
 /// Decompression cap for content from PDFs other programs wrote.
 const MAX_DECODED: usize = 512 * 1024 * 1024;
 /// Page units are pixels at 96 DPI; PDF units are points (72 per inch).
@@ -48,6 +58,8 @@ pub enum Error {
     Pdf(#[from] lopdf::Error),
     #[error("the attached page data is invalid: {0}")]
     PageData(#[from] serde_json::Error),
+    #[error("the PDF is encrypted")]
+    Encrypted,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -144,23 +156,24 @@ fn draw_page<'f>(doc: &mut Document, page: &Page, font: &'f [u8], fonts: &mut Op
     if !page.texts.is_empty() && fonts.is_none() {
         *fonts = Some(TextFont::new(font)?);
     }
-    for i in 0..page.sheets.max(1) {
-        draw_sheet(doc, page, page.sheet_top(i), fonts.as_ref())?;
+    for i in 0..page.sheet_count() {
+        draw_sheet(doc, page, page.sheet_rect(i), fonts.as_ref(), true)?;
     }
     Ok(())
 }
 
-/// One PDF page: the sheet whose top edge is at `top`, with the content that
-/// reaches onto it, cut at its edges.
-fn draw_sheet(doc: &mut Document, page: &Page, top: f32, font: Option<&TextFont>) -> Result<()> {
-    let size = PageSettings::from_wh(page.width * PT_PER_PX, page.height * PT_PER_PX)
+/// One PDF page: `sheet` with the content that reaches onto it, cut at its
+/// edges; on paper, or transparent for a layer over another PDF's page.
+fn draw_sheet(doc: &mut Document, page: &Page, sheet: Rect, font: Option<&TextFont>, paper: bool) -> Result<()> {
+    let size = PageSettings::from_wh(sheet.width() * PT_PER_PX, sheet.height() * PT_PER_PX)
         .ok_or_else(|| Error::Write("invalid page size".into()))?;
-    let sheet = Rect { min_x: 0.0, min_y: top, max_x: page.width, max_y: top + page.height };
     let mut pdf_page = doc.start_page_with(size);
     let mut surface = pdf_page.surface();
     surface.push_transform(&Transform::from_scale(PT_PER_PX, PT_PER_PX));
-    draw_paper(&mut surface, page);
-    surface.push_transform(&Transform::from_translate(0.0, -top));
+    if paper {
+        draw_paper(&mut surface, page);
+    }
+    surface.push_transform(&Transform::from_translate(-sheet.min_x, -sheet.min_y));
     let mut clip = PathBuilder::new();
     clip.push_rect(krilla::geom::Rect::from_ltrb(sheet.min_x, sheet.min_y, sheet.max_x, sheet.max_y).unwrap());
     surface.push_clip_path(&clip.finish().expect("sheet rect"), &FillRule::NonZero);
@@ -204,23 +217,22 @@ pub fn read(bytes: &[u8]) -> Result<Opened> {
 
     let pages = doc.get_pages();
     let mut changes = Vec::new();
-    let sheets = page.sheets.max(1) as usize;
+    let sheets = page.sheet_count() as usize;
     if pages.len() > sheets {
         changes.push(Change::PagesAdded(pages.len() - sheets));
     }
+    let mut had_annotations = 0;
     if let Some(&first) = pages.values().next() {
-        let stamped = doc.get_dictionary(first)?.get(FINGERPRINT_KEY).and_then(|o| o.as_str()).ok();
+        let first = doc.get_dictionary(first)?;
+        let stamped = first.get(FINGERPRINT_KEY).and_then(|o| o.as_str()).ok();
         if stamped != Some(fingerprint(&doc).as_bytes()) {
             changes.push(Change::ContentRedrawn);
         }
+        had_annotations = first.get(ANNOTATIONS_KEY).and_then(|o| o.as_i64()).unwrap_or(0).max(0) as usize;
     }
-    let annotations: usize = pages
-        .values()
-        .filter_map(|&id| doc.get_dictionary(id).ok()?.get(b"Annots").ok())
-        .filter_map(|a| doc.dereference(a).ok()?.1.as_array().ok().map(Vec::len))
-        .sum();
-    if annotations > 0 {
-        changes.push(Change::Annotations(annotations));
+    let added = annotation_count(&doc).saturating_sub(had_annotations);
+    if added > 0 {
+        changes.push(Change::Annotations(added));
     }
     Ok(if changes.is_empty() { Opened::Intact(page) } else { Opened::Changed { page, changes } })
 }
@@ -238,11 +250,28 @@ fn fingerprint(doc: &lopdf::Document) -> String {
     format!("{hash:016x}")
 }
 
+fn annotation_count(doc: &lopdf::Document) -> usize {
+    doc.get_pages()
+        .values()
+        .filter_map(|&id| doc.get_dictionary(id).ok()?.get(b"Annots").ok())
+        .filter_map(|a| doc.dereference(a).ok()?.1.as_array().ok().map(Vec::len))
+        .sum()
+}
+
+/// Records what the PDF looks like now, for [`read`] to compare against.
+fn stamp(doc: &mut lopdf::Document) -> Result<()> {
+    let page_id = *doc.get_pages().values().next().ok_or_else(|| Error::Write("no page".into()))?;
+    let fp = fingerprint(doc);
+    let annotations = annotation_count(doc) as i64;
+    let first = doc.get_dictionary_mut(page_id)?;
+    first.set(FINGERPRINT_KEY, lopdf::Object::string_literal(fp));
+    first.set(ANNOTATIONS_KEY, annotations);
+    Ok(())
+}
+
 fn stamp_fingerprint(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut doc = lopdf::Document::load_mem(bytes)?;
-    let page_id = *doc.get_pages().values().next().ok_or_else(|| Error::Write("no page".into()))?;
-    let fp = fingerprint(&doc);
-    doc.get_dictionary_mut(page_id)?.set(FINGERPRINT_KEY, lopdf::Object::string_literal(fp));
+    stamp(&mut doc)?;
     let mut out = Vec::new();
     doc.save_to(&mut out).map_err(|e| Error::Write(e.to_string()))?;
     Ok(out)

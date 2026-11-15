@@ -25,6 +25,7 @@ fn main() {
             commands::get_tree,
             commands::search,
             commands::load_page,
+            commands::page_background,
             commands::save_page,
             commands::create_page,
             commands::create_folder,

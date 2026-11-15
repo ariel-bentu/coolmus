@@ -55,9 +55,6 @@ pub enum StoreError {
     Io { path: PathBuf, source: std::io::Error },
     #[error("{path}: {source}")]
     Pdf { path: PathBuf, source: sketch_pdf::Error },
-    /// A PDF without Sketcher page data.
-    #[error("notAPage")]
-    NotAPage,
     /// A path from the caller that is not inside one of the roots.
     #[error("invalidPath")]
     InvalidPath,
@@ -424,14 +421,23 @@ impl Store {
         let (mut page, changes) = match opened {
             sketch_pdf::Opened::Intact(page) => (page, Vec::new()),
             sketch_pdf::Opened::Changed { page, changes } => (page, changes),
-            sketch_pdf::Opened::Foreign => return Err(StoreError::NotAPage),
+            // Any other PDF opens as a page to draw on; the file changes only when saved.
+            sketch_pdf::Opened::Foreign => {
+                let background = sketch_pdf::background(&bytes).map_err(|source| StoreError::Pdf { path: file.clone(), source })?;
+                (Page::on_background("", background), Vec::new())
+            }
         };
         page.title = stem_of(&file.file_name().unwrap_or_default().to_string_lossy()).to_string();
         Ok(Loaded { page, changes })
     }
 
     fn write_page(&mut self, file: &Path, page: &Page) -> Result<()> {
-        let bytes = sketch_pdf::write(page, &self.font).map_err(|source| StoreError::Pdf { path: file.to_path_buf(), source })?;
+        let pdf_err = |source| StoreError::Pdf { path: file.to_path_buf(), source };
+        let bytes = match page.background {
+            // Drawn on another PDF: the file itself is the background.
+            Some(_) => sketch_pdf::write_over(&fs::read(file).map_err(io_err(file))?, page, &self.font).map_err(pdf_err)?,
+            None => sketch_pdf::write(page, &self.font).map_err(pdf_err)?,
+        };
         write_atomic(file, &bytes)?;
         let stamp = fs::metadata(file).map(|m| stamp_of(&m)).unwrap_or_default();
         self.index.insert(api_path(file), Entry { stamp, is_page: true, tags: page.tags.clone() });
@@ -446,6 +452,14 @@ impl Store {
             return Err(StoreError::InvalidPath);
         }
         self.write_page(&file, page)
+    }
+
+    /// The PDF a page is drawn on, without Sketcher's layer, for showing
+    /// under the editable one.
+    pub fn background(&self, path: &str) -> Result<Vec<u8>> {
+        let file = self.resolve_item(path)?;
+        let bytes = fs::read(&file).map_err(io_err(&file))?;
+        sketch_pdf::strip(&bytes).map_err(|source| StoreError::Pdf { path: file, source })
     }
 
     /// Writes `page` as a new file named after `page.title` inside `folder`.
@@ -683,7 +697,7 @@ mod tests {
     }
 
     #[test]
-    fn other_pdfs_are_listed_but_are_not_pages() {
+    fn other_pdfs_open_as_backgrounds_to_draw_on() {
         let dir = temp_dir("pdfs");
         let mut doc = lopdf::Document::with_version("1.5");
         let pages = doc.new_object_id();
@@ -696,7 +710,24 @@ mod tests {
         let mut store = store(&[&dir]);
         let tree = store.tree();
         assert_eq!((tree[0].children[0].name.as_str(), tree[0].children[0].kind), ("Manual", NodeKind::Pdf));
-        assert!(matches!(store.load_page(&tree[0].children[0].path), Err(StoreError::NotAPage)));
+        let path = tree[0].children[0].path.clone();
+        let original = fs::read(dir.join("Manual.PDF")).unwrap();
+
+        // Opening doesn't change the file; it's a page whose one sheet is the PDF's page.
+        let mut page = store.load_page(&path).unwrap().page;
+        assert_eq!(page.background.as_ref().map(|b| b.sheets.len()), Some(1));
+        assert_eq!(fs::read(dir.join("Manual.PDF")).unwrap(), original);
+        assert_eq!(store.background(&path).unwrap(), original);
+
+        // Saving adds Sketcher's layer; the file becomes a page and still shows the original under it.
+        let mut s = sketch_core::Stroke::new(sketch_core::Pen::default());
+        s.points = vec![sketch_core::Point::new(1.0, 1.0, 1.0), sketch_core::Point::new(9.0, 9.0, 1.0)];
+        page.strokes.push(s);
+        store.save_page(&path, &page).unwrap();
+        assert_eq!(store.tree()[0].children[0].kind, NodeKind::Page);
+        assert_eq!(store.load_page(&path).unwrap().page.strokes.len(), 1);
+        let under = store.background(&path).unwrap();
+        assert!(sketch_pdf::page_data(&under).unwrap().is_none());
         fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -11,14 +11,29 @@ export const DEFAULT_PAGE = { width: 794, height: 1123 };
 /** Space between stacked sheets (sketch-core SHEET_GAP). */
 export const SHEET_GAP = 24;
 
-/** Top edge of sheet `i`; each sheet is page.width × page.height. */
-export const sheetTop = (page, i) => i * (page.height + SHEET_GAP);
-export const sheetCount = (page) => Math.max(1, page.sheets ?? 1);
+/**
+ * The sheets as { x, y, w, h } rectangles in page units (sketch-core
+ * Page::sheet_rect): page.width × page.height each, or for a page drawn on
+ * another PDF, that PDF's pages at their own sizes.
+ */
+export function sheetRects(page) {
+  const sizes = page.background?.sheets ?? Array.from({ length: Math.max(1, page.sheets ?? 1) }, () => ({ width: page.width, height: page.height }));
+  let y = 0;
+  return sizes.map((s) => {
+    const r = { x: 0, y, w: s.width, h: s.height };
+    y += s.height + SHEET_GAP;
+    return r;
+  });
+}
+export const sheetCount = (page) => sheetRects(page).length;
+/** Top edge of sheet `i`. */
+export const sheetTop = (page, i) => (i < sheetCount(page) ? sheetRects(page)[i].y : i * (page.height + SHEET_GAP));
 /** Height of all sheets with the gaps between them. */
-export const totalHeight = (page) => sheetTop(page, sheetCount(page)) - SHEET_GAP;
-/** The sheets as { x, y, w, h } rectangles in page units. */
-export const sheetRects = (page) =>
-  Array.from({ length: sheetCount(page) }, (_, i) => ({ x: 0, y: sheetTop(page, i), w: page.width, h: page.height }));
+export const totalHeight = (page) => {
+  const rects = sheetRects(page);
+  const last = rects[rects.length - 1];
+  return last.y + last.h;
+};
 /** True if (x, y) is on one of the sheets. */
 export const onSheet = (page, x, y) => sheetRects(page).some((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
 
@@ -194,6 +209,7 @@ export class Smoother {
 
 /** Draws the paper pattern of every visible sheet (view in page coordinates). */
 export function drawPaper(ctx, page, view, zoom) {
+  if (page.background) return; // the PDF underneath is the paper
   for (const r of sheetRects(page)) {
     if (r.y > view.maxY || r.y + r.h < view.minY) continue;
     ctx.save();

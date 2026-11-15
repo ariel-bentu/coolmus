@@ -10,6 +10,7 @@
 // onCommit({ strokes?, texts?, images? }) with the new arrays, and the app
 // applies it (which is what makes undo uniform).
 
+import * as bg from './background.js';
 import { PAPER_COLOR, bounds, drawPaper, effectiveColor, hit, onSheet, sheetRects, SHEET_GAP, Smoother, strokePath, totalHeight } from './ink.js';
 import { t } from './i18n.js';
 
@@ -152,6 +153,16 @@ export class SketchCanvas {
     const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
     this.ox = W + 2 * m <= w ? (w - W) / 2 : clamp(this.ox, w - W - m, m);
     this.oy = H + 2 * m <= h ? m : clamp(this.oy, h - H - m, m);
+  }
+
+  /** The PDF a page is drawn on, sheet by sheet, sharp at the current zoom. */
+  drawBackground(ctx, sheets, view, dpr) {
+    const scale = bg.scaleFor(this.zoom * dpr);
+    sheets.forEach((r, i) => {
+      if (r.y > view.maxY || r.y + r.h < view.minY) return;
+      const img = bg.sheetImage(this.page, i, scale, () => this.requestRender());
+      if (img) ctx.drawImage(img, r.x, r.y, r.w, r.h);
+    });
   }
 
   /** Tells onSheetChange(index, count) about the sheet under the view's middle, when it changes. */
@@ -411,13 +422,14 @@ export class SketchCanvas {
       ctx.shadowBlur = 14;
       ctx.shadowOffsetY = 2;
     }
-    ctx.fillStyle = PAPER_COLOR;
+    ctx.fillStyle = page.background ? '#fff' : PAPER_COLOR;
     for (const r of sheets) ctx.fillRect(this.ox + r.x * this.zoom, this.oy + r.y * this.zoom, r.w * this.zoom, r.h * this.zoom);
     ctx.restore();
 
     ctx.setTransform(dpr * this.zoom, 0, 0, dpr * this.zoom, dpr * this.ox, dpr * this.oy);
     const view = { minX: -this.ox / this.zoom, minY: -this.oy / this.zoom, maxX: (w - this.ox) / this.zoom, maxY: (h - this.oy) / this.zoom };
     drawPaper(ctx, page, view, this.zoom);
+    if (page.background) this.drawBackground(ctx, sheets, view, dpr);
     // Content shows only on the sheets, cut at their edges like in the PDF.
     ctx.save();
     ctx.clip(this.sheetClip(sheets));

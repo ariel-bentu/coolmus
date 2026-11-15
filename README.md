@@ -14,7 +14,7 @@ A fast pen-sketching app for Windows. Every page is an ordinary **PDF file** in 
 - **Paper.** Blank, Lined, Grid or Dotted paper per page.
 - **Your folders, as they are on disk.** Add one or more folders (for example `Documents\Sketcher` and a folder inside OneDrive); the sidebar shows them with their real subfolders and files. Create, rename, move (drag and drop between any of them, or *Move to folder…*) and delete pages and folders. Deleted items go to the Recycle Bin.
 - **Copy and paste with File Explorer.** Copy (Ctrl+C) a page or folder in Sketcher and paste it in Explorer, or copy files in Explorer and paste them into a Sketcher folder. Cut (Ctrl+X) and paste within Sketcher moves.
-- **Other PDFs** in your folders are listed too, and open in your PDF viewer.
+- **Draw on any PDF.** Other PDFs in your folders (worksheets, scans, slides) open in Sketcher with their pages as the paper. What you add is a layer on top: the PDF's own content is never changed, and everyone still sees the PDF with your notes in any viewer.
 - **Print** a page (Ctrl+P), or all pages of a folder.
 - **Import from OneNote files.** Right-click a folder → *Import from OneNote…* and pick a notebook's `Open Notebook.onetoc2` or a single section `.one`. See below.
 - **Calculated folder labels.** A folder can keep a fixed name (for example `class of 2021`) and show a label calculated from the date, for example `כיתה ג-3` this school year and `כיתה ד-3` from next September. See below.
@@ -60,6 +60,8 @@ Sketcher reads the attachment back, so nothing is lost between edits; the drawin
 
 **Edited in another program?** The page records a fingerprint of what Sketcher drew. If someone adds comments in Acrobat or otherwise changes the page, Sketcher notices when you open it and asks: open it in your PDF viewer (keeping their changes), or edit it in Sketcher (its next save replaces those changes). Re-saving a page unchanged in Preview or Acrobat is fine.
 
+**Drawing on another PDF.** Opening a PDF Sketcher didn't make shows its pages, as they are, as the sheets; the file isn't touched until you change something. Saving keeps every part of the PDF (its pages, comments, links, attachments) and adds two things: your layer, drawn over each page you drew on, and the page data. Saving again replaces the layer rather than adding another, and Sketcher can always take it off to get the PDF back as it was (that's what it shows under your editable layer). The page data records the size of each of the PDF's pages under `"background"`. Encrypted PDFs can be viewed but not saved.
+
 A folder with a calculated label also contains a hidden `.sketcher-folder.json`, so the label moves and syncs with the folder.
 
 ### Importing from OneNote
@@ -90,7 +92,8 @@ crates/sketch-core    Pure data model: Page (strokes, text boxes, pictures), Pen
                       hit-testing, input smoothing. No I/O, no UI.
 crates/sketch-render  Stroke → triangle meshes, stroke → outline → PNG (tiny-skia), paper patterns.
 crates/sketch-pdf     Page ⇄ PDF: draws a page as vector PDF (krilla, with bidi text layout),
-                      attaches and reads back the page data, detects edits by other programs.
+                      attaches and reads back the page data, detects edits by other programs;
+                      adds and removes a page's layer on another PDF (lopdf).
 crates/onenote-import OneNote .one / .onetoc2 files → Sketcher pages (via onenote_parser).
 crates/sketch-store   The root folders: tree scan, page files, rename/move/copy/trash, tag index,
                       folder labels.
@@ -99,7 +102,8 @@ app/                  Tauri 2 desktop shell (Rust): commands over the crates abo
 app/ui/               The interface: plain HTML/CSS/JavaScript with no build step.
                       canvas.js (input, drawing, selection, text editing), tree.js (folders),
                       media.js (pictures and camera), labels.js (calculated folder labels),
-                      export.js (PNG), i18n.js.
+                      export.js (PNG and printing), background.js (another PDF under a page,
+                      rendered with pdf.js from vendor/pdfjs), i18n.js.
 ```
 
 `sketch-core` doesn't depend on any other crate here. The interface only talks to the backend through Tauri commands, and all paths it sends are checked so they can't leave the folders you added.

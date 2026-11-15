@@ -235,7 +235,9 @@ impl ImageItem {
 ///
 /// The sheets are `width` × `height` each, stacked top to bottom with
 /// [`SHEET_GAP`] between them, and all content shares that one coordinate
-/// space: sheet `i` spans `sheet_top(i) ..= sheet_top(i) + height`.
+/// space: sheet `i` is [`Page::sheet_rect`]`(i)`. A page drawn on another
+/// PDF has that PDF's pages as its sheets instead, each its own size (see
+/// [`Background`]).
 ///
 /// Stored as one JSON file. The page's name is its file name, so `title` is
 /// filled in when the file is loaded and never written into the file.
@@ -258,6 +260,9 @@ pub struct Page {
     pub height: f32,
     #[serde(default = "one")]
     pub sheets: u32,
+    /// Set when the page is drawn on a PDF from elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub background: Option<Background>,
     #[serde(default)]
     pub strokes: Vec<Stroke>,
     #[serde(default)]
@@ -266,6 +271,20 @@ pub struct Page {
     pub images: Vec<ImageItem>,
     pub created: u64,
     pub modified: u64,
+}
+
+/// A PDF from elsewhere that a page draws on: its pages, untouched, are the
+/// sheets, and the page's own content is a layer on top.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Background {
+    /// Each PDF page's size as shown (rotation applied), in page units.
+    pub sheets: Vec<SheetSize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct SheetSize {
+    pub width: f32,
+    pub height: f32,
 }
 
 /// A4 at 96 DPI.
@@ -291,6 +310,7 @@ impl Page {
             width: DEFAULT_PAGE_SIZE.0,
             height: DEFAULT_PAGE_SIZE.1,
             sheets: 1,
+            background: None,
             strokes: Vec::new(),
             texts: Vec::new(),
             images: Vec::new(),
@@ -303,14 +323,45 @@ impl Page {
         self.modified = now_millis();
     }
 
+    /// A page drawn on `background`; `width` is its widest sheet.
+    pub fn on_background(title: impl Into<String>, background: Background) -> Self {
+        let mut page = Self::new(title);
+        page.width = background.sheets.iter().map(|s| s.width).fold(0.0, f32::max);
+        page.height = background.sheets.first().map_or(page.height, |s| s.height);
+        page.sheets = background.sheets.len() as u32;
+        page.background = Some(background);
+        page
+    }
+
+    pub fn sheet_count(&self) -> u32 {
+        match &self.background {
+            Some(bg) => bg.sheets.len().max(1) as u32,
+            None => self.sheets.max(1),
+        }
+    }
+
+    /// Sheet `i` in page coordinates.
+    pub fn sheet_rect(&self, i: u32) -> Rect {
+        let (top, size) = match &self.background {
+            Some(bg) => {
+                let sizes = &bg.sheets[..(i as usize).min(bg.sheets.len())];
+                let top = sizes.iter().map(|s| s.height + SHEET_GAP).sum();
+                let size = bg.sheets.get(i as usize).copied().unwrap_or(SheetSize { width: self.width, height: self.height });
+                (top, size)
+            }
+            None => (i as f32 * (self.height + SHEET_GAP), SheetSize { width: self.width, height: self.height }),
+        };
+        Rect { min_x: 0.0, min_y: top, max_x: size.width, max_y: top + size.height }
+    }
+
     /// Top edge of sheet `i`.
     pub fn sheet_top(&self, i: u32) -> f32 {
-        i as f32 * (self.height + SHEET_GAP)
+        self.sheet_rect(i).min_y
     }
 
     /// Height of all sheets with the gaps between them.
     pub fn total_height(&self) -> f32 {
-        self.sheet_top(self.sheets.max(1)) - SHEET_GAP
+        self.sheet_rect(self.sheet_count() - 1).max_y
     }
 
     /// Bounds of all ink (empty rect if none).

@@ -8,6 +8,7 @@ import { bounds, sheetCount, sheetTop, SHEET_GAP } from './ink.js';
 import { $, el, bdi, error, modal, prompt, confirmDialog, showMenu } from './ui.js';
 import { renderTree, allFolders, findNode, parentOf, baseName, isInside } from './tree.js';
 import { pagePng, printSheets } from './export.js';
+import * as bg from './background.js';
 import { fromBlob, pickFile, takePhoto } from './media.js';
 import { editLabel, labelText } from './labels.js';
 
@@ -364,7 +365,7 @@ async function refreshTree() {
 
 const treeCtx = {
   state,
-  open: (node) => (node.kind === 'page' ? openPage(node.path) : call('open_external', { path: node.path })),
+  open: (node) => openPage(node.path),
   newPage: (folder) => newPage(folder),
   newFolder: (parent) => newFolder(parent),
   rename: (node) => renameItem(node),
@@ -382,7 +383,7 @@ const treeCtx = {
   copy: (node) => copyItems([node.path], false),
   cut: (node) => copyItems([node.path], true),
   paste: (folder) => pasteInto(folder),
-  print: (node) => (node.kind === 'page' ? printPages([node.path], node.name) : printFolder(node)),
+  print: (node) => (node.kind === 'folder' || node.kind === 'root' ? printFolder(node) : printPages([node.path], node.name)),
   removeRoot: (node) => removeRoot(node),
   importOneNote: (folder) => importOneNote(folder),
   select: (node) => (state.treeSel = { path: node.path, kind: node.kind }),
@@ -396,12 +397,19 @@ function renderSidebar() {
   renderTree(treeCtx);
 }
 
+/** Loads a page, with the PDF it is drawn on if it has one. */
+async function loadPage(path) {
+  const loaded = await call('load_page', { path });
+  if (loaded.page.background) bg.attach(loaded.page, new Uint8Array(await call('page_background', { path })));
+  return loaded;
+}
+
 async function openPage(path, { force = false } = {}) {
   if (!force && state.current?.path === path) return;
   canvas.endTextEdit();
   rememberView();
   await saveNow();
-  const { page, changes } = await call('load_page', { path });
+  const { page, changes } = await loadPage(path);
   // Changed in another program (e.g. annotated in Acrobat): saving from here
   // would drop those changes, so ask first.
   if (changes.length) {
@@ -614,7 +622,7 @@ async function printPages(paths, title) {
     const imgs = [];
     const sheets = [];
     for (const path of paths) {
-      const page = path === state.current?.path ? state.current.page : (await call('load_page', { path })).page;
+      const page = path === state.current?.path ? state.current.page : (await loadPage(path)).page;
       for (const c of await printSheets(page)) {
         const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
         const img = el('img', { src: URL.createObjectURL(blob) });
@@ -983,11 +991,16 @@ function bind() {
     if (!c) return;
     const r = e.currentTarget.getBoundingClientRect();
     showMenu(r.left, r.bottom + 4, [
-      { label: t('paper') },
-      ...PAPERS.map((p) => ({ text: (c.page.paper === p ? '✓ ' : ' ') + t('paper_' + p), action: () => { c.page.paper = p; changed(); canvas.invalidate(); } })),
-      '-',
-      { text: t('addSheet'), action: addSheet },
-      { text: t('removeSheet'), disabled: sheetCount(c.page) < 2, action: removeLastSheet },
+      // A page drawn on a PDF has that PDF's pages as its paper.
+      ...(c.page.background
+        ? []
+        : [
+            { label: t('paper') },
+            ...PAPERS.map((p) => ({ text: (c.page.paper === p ? '✓ ' : ' ') + t('paper_' + p), action: () => { c.page.paper = p; changed(); canvas.invalidate(); } })),
+            '-',
+            { text: t('addSheet'), action: addSheet },
+            { text: t('removeSheet'), disabled: sheetCount(c.page) < 2, action: removeLastSheet },
+          ]),
       {
         text: t('clearPage'), danger: true,
         action: () => (c.page.strokes.length || c.page.texts.length || c.page.images.length) && commit({ strokes: [], texts: [], images: [] }),

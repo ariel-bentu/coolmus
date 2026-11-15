@@ -81,6 +81,12 @@ pub async fn load_page(state: State<'_, AppState>, path: String) -> CmdResult<Lo
     Ok(LoadedPage { page: loaded.page, changes })
 }
 
+/// The PDF a page is drawn on (without Sketcher's layer), as raw bytes.
+#[tauri::command]
+pub async fn page_background(state: State<'_, AppState>, path: String) -> CmdResult<tauri::ipc::Response> {
+    Ok(tauri::ipc::Response::new(state.store().background(&path).map_err(err)?))
+}
+
 #[tauri::command]
 pub async fn save_page(state: State<'_, AppState>, path: String, page: Page) -> CmdResult<()> {
     state.store().save_page(&path, &page).map_err(err)

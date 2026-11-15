@@ -3,6 +3,7 @@
 
 import { PAPER_COLOR, drawPaper, effectiveColor, sheetRects, strokePath, totalHeight } from './ink.js';
 import { colorCss } from './canvas.js';
+import * as bg from './background.js';
 
 const FONT = getComputedStyle(document.documentElement).fontFamily || 'sans-serif';
 const RTL_FIRST = /^[^A-Za-zÀ-ɏ]*[֐-׿؀-ۿ]/;
@@ -61,12 +62,19 @@ async function renderRegion(page, y, h, scale) {
   const clip = new Path2D();
   ctx.fillStyle = '#d5d7db'; // the gaps between sheets
   ctx.fillRect(0, y, page.width, h);
-  ctx.fillStyle = PAPER_COLOR;
+  ctx.fillStyle = page.background ? '#fff' : PAPER_COLOR;
   for (const r of sheets) {
     ctx.fillRect(r.x, r.y, r.w, r.h);
     clip.rect(r.x, r.y, r.w, r.h);
   }
   drawPaper(ctx, page, { minX: 0, minY: y, maxX: page.width, maxY: y + h }, scale);
+  if (page.background) {
+    for (const [i, r] of sheets.entries()) {
+      if (r.y >= y + h || r.y + r.h <= y) continue;
+      const img = await bg.render(page, i, bg.scaleFor(scale));
+      if (img) ctx.drawImage(img, r.x, r.y, r.w, r.h);
+    }
+  }
   ctx.clip(clip);
   for (const im of page.images) {
     const img = await load(im.src);
@@ -95,12 +103,13 @@ export async function pagePng(page, scale = 2) {
  */
 export async function printSheets(page, scale = 3) {
   const out = [];
-  const a4 = page.width * Math.SQRT2;
   for (const r of sheetRects(page)) {
-    const n = Math.max(1, Math.ceil(r.h / a4 - 0.01));
+    // A PDF's pages print one each, whatever their shape.
+    const piece = page.background ? r.h : r.w * Math.SQRT2;
+    const n = Math.max(1, Math.ceil(r.h / piece - 0.01));
     for (let i = 0; i < n; i++) {
-      const y = r.y + i * a4;
-      out.push(await renderRegion(page, y, Math.min(a4, r.y + r.h - y), scale));
+      const y = r.y + i * piece;
+      out.push(await renderRegion(page, y, Math.min(piece, r.y + r.h - y), scale));
     }
   }
   return out;

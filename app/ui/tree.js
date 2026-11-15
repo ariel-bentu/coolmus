@@ -161,7 +161,7 @@ function fileRow(ctx, node, depth) {
     ctx.open(node);
   });
   const menu = (x, y) => showMenu(x, y, [
-    isPage && { text: t('print'), action: () => ctx.print(node) },
+    { text: t('print'), action: () => ctx.print(node) },
     { text: t('openInViewer'), action: () => ctx.openExternal(node.path) },
     { text: t('revealFolder'), action: () => ctx.reveal(node.path) },
     '-',
