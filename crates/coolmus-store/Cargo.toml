@@ -1,13 +1,13 @@
 [package]
-name = "sketch-store"
-description = "Sketcher pages as PDF files in ordinary folders under one or more roots."
+name = "coolmus-store"
+description = "Coolmus pages as PDF files in ordinary folders under one or more roots."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-sketch-core.workspace = true
-sketch-pdf.workspace = true
+coolmus-core.workspace = true
+coolmus-pdf.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Sketcher",
+  "productName": "Coolmus",
   "version": "0.1.0",
-  "identifier": "app.sketcher.desktop",
+  "identifier": "app.coolmus.desktop",
   "build": {
     "frontendDist": "ui"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Sketcher",
+        "title": "Coolmus",
         "width": 1280,
         "height": 860,
         "minWidth": 720,

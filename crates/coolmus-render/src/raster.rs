@@ -1,4 +1,4 @@
-use sketch_core::{Color, Page};
+use coolmus_core::{Color, Page};
 use tiny_skia::{
     FillRule, Paint, PathBuilder, Pixmap, PixmapPaint, Stroke as SkStroke, Transform,
 };
@@ -119,7 +119,7 @@ pub fn render_png(page: &Page, opts: RasterOptions) -> Result<Vec<u8>, RasterErr
 mod tests {
     use super::*;
     use crate::tessellate::stroke_from_xy;
-    use sketch_core::{Pen, PenStyle};
+    use coolmus_core::{Pen, PenStyle};
 
     #[test]
     fn round_caps_extend_past_endpoints() {

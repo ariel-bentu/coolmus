@@ -3,13 +3,13 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use sketch_core::Pen;
+use coolmus_core::Pen;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Settings {
     /// Folders shown in the tree, in order; empty means the default
-    /// (`Documents/Sketcher`).
+    /// (`Documents/Coolmus`).
     pub roots: Vec<String>,
     pub smoothing: f32,
     pub pen: Pen,
@@ -28,9 +28,9 @@ impl Default for Settings {
 }
 
 pub fn config_dir() -> PathBuf {
-    directories::ProjectDirs::from("", "", "Sketcher")
+    directories::ProjectDirs::from("", "", "Coolmus")
         .map(|d| d.config_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("sketcher-config"))
+        .unwrap_or_else(|| PathBuf::from("coolmus-config"))
 }
 
 impl Settings {
@@ -58,7 +58,7 @@ impl Settings {
         if !self.roots.is_empty() {
             return self.roots.iter().map(PathBuf::from).collect();
         }
-        let root = sketch_store::default_root();
+        let root = coolmus_store::default_root();
         if let Err(e) = std::fs::create_dir_all(&root) {
             log::error!("could not create {}: {e}", root.display());
         }

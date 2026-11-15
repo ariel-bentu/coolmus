@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/sketch-core", "crates/sketch-render", "crates/sketch-store", "crates/sketch-pdf", "crates/onenote-import", "app"]
+members = ["crates/coolmus-core", "crates/coolmus-render", "crates/coolmus-store", "crates/coolmus-pdf", "crates/onenote-import", "app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,10 +8,10 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-sketch-core = { path = "crates/sketch-core" }
-sketch-render = { path = "crates/sketch-render" }
-sketch-store = { path = "crates/sketch-store" }
-sketch-pdf = { path = "crates/sketch-pdf" }
+coolmus-core = { path = "crates/coolmus-core" }
+coolmus-render = { path = "crates/coolmus-render" }
+coolmus-store = { path = "crates/coolmus-store" }
+coolmus-pdf = { path = "crates/coolmus-pdf" }
 onenote-import = { path = "crates/onenote-import" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

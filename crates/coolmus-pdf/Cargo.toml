@@ -1,13 +1,13 @@
 [package]
-name = "sketch-pdf"
-description = "Sketcher pages as PDF files that carry their own editable page data."
+name = "coolmus-pdf"
+description = "Coolmus pages as PDF files that carry their own editable page data."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-sketch-core.workspace = true
-sketch-render.workspace = true
+coolmus-core.workspace = true
+coolmus-render.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 krilla = "0.8"

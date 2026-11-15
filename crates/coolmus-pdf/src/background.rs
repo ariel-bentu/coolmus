@@ -1,6 +1,6 @@
 //! Pages drawn on a PDF from elsewhere (a worksheet, a scan, slides).
 //!
-//! The PDF stays as it was: every object of it is kept, and Sketcher adds
+//! The PDF stays as it was: every object of it is kept, and Coolmus adds
 //! a layer on top of each page it drew on, plus its page data. The layer is
 //! one Form XObject per page, drawn after the page's own content, which is
 //! wrapped in `q … Q` so nothing it leaves set (a transform, a clip) leaks
@@ -11,16 +11,16 @@
 use std::collections::HashMap;
 
 use lopdf::{dictionary, Dictionary, Object, ObjectId, Stream};
-use sketch_core::{Background, Page, Rect, SheetSize};
+use coolmus_core::{Background, Page, Rect, SheetSize};
 
 use super::*;
 
-/// The page's `Contents` before Sketcher's layer (`null`: it had none).
-const ORIGINAL_CONTENTS: &[u8] = b"SketcherOriginalContents";
-/// The page's own `Resources` before Sketcher's layer (`null`: inherited).
-const ORIGINAL_RESOURCES: &[u8] = b"SketcherOriginalResources";
+/// The page's `Contents` before Coolmus's layer (`null`: it had none).
+const ORIGINAL_CONTENTS: &[u8] = b"CoolmusOriginalContents";
+/// The page's own `Resources` before Coolmus's layer (`null`: inherited).
+const ORIGINAL_RESOURCES: &[u8] = b"CoolmusOriginalResources";
 /// Resource name of the layer.
-const LAYER: &[u8] = b"SketcherLayer";
+const LAYER: &[u8] = b"CoolmusLayer";
 
 /// The sheets for drawing on `bytes`: one per PDF page, sized as shown.
 pub fn background(bytes: &[u8]) -> Result<Background> {
@@ -46,7 +46,7 @@ pub fn write_over(original: &[u8], page: &Page, font: &[u8]) -> Result<Vec<u8>> 
     }
     strip_doc(&mut doc)?;
 
-    // The layer: drawn like a Sketcher page, one transparent PDF page per sheet.
+    // The layer: drawn like a Coolmus page, one transparent PDF page per sheet.
     let targets: Vec<ObjectId> = doc.get_pages().values().copied().collect();
     let sheets: Vec<Rect> = (0..page.sheet_count()).map(|i| page.sheet_rect(i)).take(targets.len()).collect();
     let mut layer = new_document("");
@@ -72,8 +72,8 @@ pub fn write_over(original: &[u8], page: &Page, font: &[u8]) -> Result<Vec<u8>> 
     Ok(out)
 }
 
-/// The PDF without Sketcher's layer and data: what it was before Sketcher
-/// drew on it. Returned as is if Sketcher never did.
+/// The PDF without Coolmus's layer and data: what it was before Coolmus
+/// drew on it. Returned as is if Coolmus never did.
 pub fn strip(bytes: &[u8]) -> Result<Vec<u8>> {
     let mut doc = lopdf::Document::load_mem(bytes)?;
     if !strip_doc(&mut doc)? {
@@ -249,7 +249,7 @@ fn add_layer(doc: &mut lopdf::Document, id: ObjectId, form: ObjectId) -> Result<
         Ok(_) => streams.push(contents.clone()),
     }
     let open = doc.add_object(Stream::new(Dictionary::new(), b"q\n".to_vec()));
-    let draw = format!("\nQ q {} cm /SketcherLayer Do Q\n", m.map(|v| format!("{v}")).join(" "));
+    let draw = format!("\nQ q {} cm /CoolmusLayer Do Q\n", m.map(|v| format!("{v}")).join(" "));
     let close = doc.add_object(Stream::new(Dictionary::new(), draw.into_bytes()));
     streams.insert(0, Object::Reference(open));
     streams.push(Object::Reference(close));
@@ -297,7 +297,7 @@ fn attach(doc: &mut lopdf::Document, json: Vec<u8>) {
         "F" => Object::string_literal(PAGE_FILE),
         "UF" => Object::string_literal(PAGE_FILE),
         "EF" => dictionary! { "F" => file },
-        "Desc" => Object::string_literal("Sketcher page data"),
+        "Desc" => Object::string_literal("Coolmus page data"),
         "AFRelationship" => "Source",
     });
     let Some((names, mut files)) = embedded_files(doc) else { return };
@@ -310,7 +310,7 @@ fn attach(doc: &mut lopdf::Document, json: Vec<u8>) {
     set_embedded_files(doc, names, files);
 }
 
-/// Removes Sketcher's page data; false if there was none.
+/// Removes Coolmus's page data; false if there was none.
 fn detach(doc: &mut lopdf::Document) -> bool {
     let Some((names, mut files)) = embedded_files(doc) else { return false };
     let Ok(list) = files.get(b"Names").and_then(|n| n.as_array()) else { return false };
@@ -371,8 +371,8 @@ mod tests {
         let mut page = Page::on_background("w", background(original).unwrap());
         for i in 0..2 {
             let top = page.sheet_top(i);
-            let mut s = sketch_core::Stroke::new(sketch_core::Pen::default());
-            s.points = vec![sketch_core::Point::new(10.0, top + 10.0, 1.0), sketch_core::Point::new(100.0, top + 60.0, 1.0)];
+            let mut s = coolmus_core::Stroke::new(coolmus_core::Pen::default());
+            s.points = vec![coolmus_core::Point::new(10.0, top + 10.0, 1.0), coolmus_core::Point::new(100.0, top + 60.0, 1.0)];
             page.strokes.push(s);
         }
         page
@@ -401,7 +401,7 @@ mod tests {
         let d = lopdf::Document::load_mem(&written).unwrap();
         for (i, &id) in d.get_pages().values().enumerate() {
             let content = String::from_utf8_lossy(&d.get_page_content(id)).to_string();
-            assert!(content.starts_with("q\n") && content.contains("/SketcherLayer Do"), "page {i}: {content}");
+            assert!(content.starts_with("q\n") && content.contains("/CoolmusLayer Do"), "page {i}: {content}");
         }
         // Their comment and attachment are still there.
         assert_eq!(annotation_count(&d), 1);
@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(contents(&again), contents(&written));
         assert!(again.len() < written.len() + 512, "{} vs {}", again.len(), written.len());
 
-        // Stripping gives back what they drew, without Sketcher's data.
+        // Stripping gives back what they drew, without Coolmus's data.
         let stripped = strip(&again).unwrap();
         assert_eq!(contents(&stripped), contents(&original));
         assert!(page_data(&stripped).unwrap().is_none());

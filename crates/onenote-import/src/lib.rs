@@ -1,4 +1,4 @@
-//! Imports OneNote notebooks and sections from files as Sketcher pages.
+//! Imports OneNote notebooks and sections from files as Coolmus pages.
 //!
 //! Reads `.onetoc2` (a notebook: its folder holds one `.one` per section) and
 //! `.one` (a single section), as downloaded from OneDrive or saved by OneNote
@@ -6,7 +6,7 @@
 //! becomes text boxes and pictures stay pictures, at their positions.
 //!
 //! OneNote units: layout offsets and sizes are in half-inches, ink in
-//! 0.01 mm, font sizes in half-points. Sketcher uses pixels at 96 DPI.
+//! 0.01 mm, font sizes in half-points. Coolmus uses pixels at 96 DPI.
 
 use std::io::Read;
 use std::path::Path;
@@ -17,7 +17,7 @@ use onenote_parser::page::PageContent;
 use onenote_parser::property::common::ColorRef;
 use onenote_parser::section::{Section, SectionEntry};
 use onenote_parser::Parser;
-use sketch_core::{new_id, Color, ImageItem, Page, Pen, PenStyle, Point, Stroke, TextBox};
+use coolmus_core::{new_id, Color, ImageItem, Page, Pen, PenStyle, Point, Stroke, TextBox};
 use typed_path::TypedPath;
 
 const PX_PER_HALF_INCH: f32 = 48.0;

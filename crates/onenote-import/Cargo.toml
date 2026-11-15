@@ -1,12 +1,12 @@
 [package]
 name = "onenote-import"
-description = "Imports OneNote notebooks (.onetoc2) and sections (.one) from files as Sketcher pages."
+description = "Imports OneNote notebooks (.onetoc2) and sections (.one) from files as Coolmus pages."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-sketch-core.workspace = true
+coolmus-core.workspace = true
 thiserror.workspace = true
 base64 = "0.22"
 onenote_parser = "2.1"
@@ -14,5 +14,5 @@ typed-path = "0.12.3"
 time = "0.3"
 
 [dev-dependencies]
-sketch-store.workspace = true
-sketch-pdf.workspace = true
+coolmus-store.workspace = true
+coolmus-pdf.workspace = true

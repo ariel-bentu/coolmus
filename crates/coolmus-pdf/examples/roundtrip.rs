@@ -1,6 +1,6 @@
-//! Writes a page as `.sketcher.pdf`, reads it back and checks nothing was lost.
+//! Writes a page as `.coolmus.pdf`, reads it back and checks nothing was lost.
 //!
-//!     cargo run -p sketch-pdf --example roundtrip -- <font.ttf> <out dir> [page.sketcher …]
+//!     cargo run -p coolmus-pdf --example roundtrip -- <font.ttf> <out dir> [page.coolmus …]
 //!
 //! Without page files it writes a demo page with every kind of content.
 
@@ -8,13 +8,13 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use base64::Engine;
-use sketch_core::{Color, ImageItem, Page, Paper, Pen, PenStyle, Point, Stroke, TextBox};
-use sketch_pdf::Opened;
+use coolmus_core::{Color, ImageItem, Page, Paper, Pen, PenStyle, Point, Stroke, TextBox};
+use coolmus_pdf::Opened;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let [font, out, pages @ ..] = args.as_slice() else {
-        eprintln!("usage: roundtrip <font.ttf> <out dir> [page.sketcher …]");
+        eprintln!("usage: roundtrip <font.ttf> <out dir> [page.coolmus …]");
         std::process::exit(2);
     };
     let font = std::fs::read(font).expect("read font");
@@ -40,14 +40,14 @@ fn load(path: &Path) -> (String, Page) {
 
 fn roundtrip(name: &str, page: &Page, font: &[u8], out: &Path) -> bool {
     let t = Instant::now();
-    let pdf = sketch_pdf::write(page, font).expect("write");
+    let pdf = coolmus_pdf::write(page, font).expect("write");
     let write_ms = t.elapsed().as_secs_f32() * 1000.0;
-    let file: PathBuf = out.join(format!("{name}.sketcher.pdf"));
+    let file: PathBuf = out.join(format!("{name}.coolmus.pdf"));
     std::fs::write(&file, &pdf).unwrap();
     let json_len = serde_json::to_vec(page).unwrap().len();
 
     let t = Instant::now();
-    let opened = sketch_pdf::read(&pdf).expect("read");
+    let opened = coolmus_pdf::read(&pdf).expect("read");
     let read_ms = t.elapsed().as_secs_f32() * 1000.0;
     let same = match &opened {
         Opened::Intact(back) => {
@@ -105,7 +105,7 @@ fn demo_page() -> Page {
     }
 
     let text = |x, y, width, size, text: &str| TextBox {
-        id: sketch_core::new_id(),
+        id: coolmus_core::new_id(),
         x,
         y,
         width,
@@ -114,7 +114,7 @@ fn demo_page() -> Page {
         color: Color::BLACK,
     };
     page.texts.push(text(100.0, 300.0, 600.0, 22.0, "שלום עולם! זו פסקה בעברית שמספיק ארוכה כדי להישבר לכמה שורות בתוך התיבה."));
-    page.texts.push(text(100.0, 420.0, 600.0, 22.0, "Sketcher גרסה 2.0 עובד עם Hebrew ו-English באותה שורה."));
+    page.texts.push(text(100.0, 420.0, 600.0, 22.0, "Coolmus גרסה 2.0 עובד עם Hebrew ו-English באותה שורה."));
     page.texts.push(text(100.0, 480.0, 300.0, 18.0, "An English paragraph that wraps inside a narrower box.\n\nAfter an empty line."));
     page.texts.push(text(450.0, 480.0, 250.0, 18.0, "שורה ראשונה\nשורה שנייה (2)"));
 
@@ -131,9 +131,9 @@ fn demo_page() -> Page {
     let mut s = Stroke::new(Pen { color: Color::rgb(0, 140, 70), width: 10.0, ..Pen::default() });
     s.points = vec![Point::new(20.0, 100.0, 1.0), Point::new(100.0, 20.0, 1.0), Point::new(180.0, 100.0, 1.0)];
     pic.strokes.push(s);
-    let png = sketch_render::raster::render_png(&pic, Default::default()).unwrap();
+    let png = coolmus_render::raster::render_png(&pic, Default::default()).unwrap();
     page.images.push(ImageItem {
-        id: sketch_core::new_id(),
+        id: coolmus_core::new_id(),
         x: 100.0,
         y: 620.0,
         width: 300.0,

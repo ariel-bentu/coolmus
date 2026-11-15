@@ -1,6 +1,6 @@
 // The PDF under a page drawn on another PDF (a worksheet, a scan), rendered
 // with pdf.js. Sheet i of the page is page i + 1 of the PDF, as shown (pdf.js
-// applies the crop box and rotation, like crates/sketch-pdf/src/background.rs).
+// applies the crop box and rotation, like crates/coolmus-pdf/src/background.rs).
 
 import * as pdfjs from './vendor/pdfjs/pdf.min.mjs';
 

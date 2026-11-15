@@ -1,5 +1,5 @@
-// Stroke geometry for the screen. Mirrors crates/sketch-render (tessellate.rs,
-// paper.rs) and sketch-core (Pen::width_at, effective_color, hit testing) so
+// Stroke geometry for the screen. Mirrors crates/coolmus-render (tessellate.rs,
+// paper.rs) and coolmus-core (Pen::width_at, effective_color, hit testing) so
 // what you see matches the PDF and PNG export.
 
 export const PAPER_COLOR = '#fdfdfb';
@@ -8,11 +8,11 @@ const MARGIN_COLOR = '#f0b4b4';
 const RULE_SPACING = 32;
 const GRID_SPACING = 24;
 export const DEFAULT_PAGE = { width: 794, height: 1123 };
-/** Space between stacked sheets (sketch-core SHEET_GAP). */
+/** Space between stacked sheets (coolmus-core SHEET_GAP). */
 export const SHEET_GAP = 24;
 
 /**
- * The sheets as { x, y, w, h } rectangles in page units (sketch-core
+ * The sheets as { x, y, w, h } rectangles in page units (coolmus-core
  * Page::sheet_rect): page.width × page.height each, or for a page drawn on
  * another PDF, that PDF's pages at their own sizes.
  */

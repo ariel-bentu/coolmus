@@ -1,13 +1,13 @@
-//! Sketcher pages as ordinary PDF files.
+//! Coolmus pages as ordinary PDF files.
 //!
 //! [`write`] draws the page as vector PDF (ink outlines, real text, pictures,
 //! paper) and attaches the page's own JSON. Any PDF viewer shows the page;
-//! Sketcher reads the attachment back with [`read`] and edits it losslessly.
+//! Coolmus reads the attachment back with [`read`] and edits it losslessly.
 //!
 //! A page drawn on a PDF from elsewhere keeps that PDF as it is and adds its
 //! own layer on top; see [`background`].
 //!
-//! The page dictionary carries a fingerprint of the content Sketcher drew. If
+//! The page dictionary carries a fingerprint of the content Coolmus drew. If
 //! another program changed what is visible (redrew the page or added
 //! annotations), [`read`] reports it so the caller can keep those changes
 //! instead of silently overwriting them.
@@ -28,19 +28,19 @@ use krilla::paint::{Fill, FillRule, Stroke as PdfStroke};
 use krilla::surface::Surface;
 use krilla::text::{Font, TextDirection};
 use krilla::Document;
-use sketch_core::{Color, ImageItem, Page, Rect, TextBox};
-use sketch_render::paper::{self, Mark, PAPER_COLOR};
-use sketch_render::tessellate::outlines;
+use coolmus_core::{Color, ImageItem, Page, Rect, TextBox};
+use coolmus_render::paper::{self, Mark, PAPER_COLOR};
+use coolmus_render::tessellate::outlines;
 
 pub use background::{background, strip, write_over};
 
 /// Name of the attached page data inside the PDF.
-pub const PAGE_FILE: &str = "sketcher-page.json";
-/// Page-dictionary key holding the fingerprint of the content Sketcher drew.
-const FINGERPRINT_KEY: &[u8] = b"SketcherContent";
-/// Page-dictionary key holding how many annotations the PDF had when Sketcher
+pub const PAGE_FILE: &str = "coolmus-page.json";
+/// Page-dictionary key holding the fingerprint of the content Coolmus drew.
+const FINGERPRINT_KEY: &[u8] = b"CoolmusContent";
+/// Page-dictionary key holding how many annotations the PDF had when Coolmus
 /// wrote it (a PDF from elsewhere may come with some).
-const ANNOTATIONS_KEY: &[u8] = b"SketcherAnnotations";
+const ANNOTATIONS_KEY: &[u8] = b"CoolmusAnnotations";
 /// Decompression cap for content from PDFs other programs wrote.
 const MAX_DECODED: usize = 512 * 1024 * 1024;
 /// Page units are pixels at 96 DPI; PDF units are points (72 per inch).
@@ -67,9 +67,9 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// What [`read`] found in a PDF.
 #[derive(Debug)]
 pub enum Opened {
-    /// Written by Sketcher and unchanged since.
+    /// Written by Coolmus and unchanged since.
     Intact(Page),
-    /// Has Sketcher page data, but another program changed what is visible.
+    /// Has Coolmus page data, but another program changed what is visible.
     Changed { page: Page, changes: Vec<Change> },
     /// Any other PDF.
     Foreign,
@@ -77,7 +77,7 @@ pub enum Opened {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Change {
-    /// The page's drawing no longer matches what Sketcher wrote.
+    /// The page's drawing no longer matches what Coolmus wrote.
     ContentRedrawn,
     /// Annotations (comments, highlights, ink) were added on top.
     Annotations(usize),
@@ -95,7 +95,7 @@ pub fn write(page: &Page, font: &[u8]) -> Result<Vec<u8>> {
     doc.embed_file(EmbeddedFile {
         path: PAGE_FILE.into(),
         mime_type: MimeType::new("application/json"),
-        description: Some("Sketcher page data".into()),
+        description: Some("Coolmus page data".into()),
         association_kind: AssociationKind::Source,
         data: serde_json::to_vec(page)?.into(),
         modification_date: None,
@@ -143,7 +143,7 @@ pub fn system_font() -> Option<Vec<u8>> {
 
 fn new_document(title: &str) -> Document {
     let mut doc = Document::new();
-    let mut metadata = Metadata::new().creator("Sketcher".into());
+    let mut metadata = Metadata::new().creator("Coolmus".into());
     if !title.is_empty() {
         metadata = metadata.title(title.to_string());
     }
@@ -180,7 +180,7 @@ fn draw_sheet(doc: &mut Document, page: &Page, sheet: Rect, font: Option<&TextFo
     for image in page.images.iter().filter(|im| im.bounds().intersects(&sheet)) {
         draw_image(&mut surface, image);
     }
-    for stroke in sketch_render::paint_order(&page.strokes).filter(|s| s.bounds().intersects(&sheet)) {
+    for stroke in coolmus_render::paint_order(&page.strokes).filter(|s| s.bounds().intersects(&sheet)) {
         let color = stroke.pen.effective_color();
         let Some(path) = polygons(&outlines(stroke)) else { continue };
         if color.a == 255 {
@@ -208,7 +208,7 @@ fn draw_sheet(doc: &mut Document, page: &Page, sheet: Rect, font: Option<&TextFo
     Ok(())
 }
 
-/// Reads a PDF: Sketcher's own page data if it carries some, and whether
+/// Reads a PDF: Coolmus's own page data if it carries some, and whether
 /// another program has changed the page since.
 pub fn read(bytes: &[u8]) -> Result<Opened> {
     let doc = lopdf::Document::load_mem(bytes)?;
@@ -533,11 +533,11 @@ mod tests {
 
     fn ink_page() -> Page {
         let mut page = Page::new("t");
-        let mut s = sketch_core::Stroke::new(sketch_core::Pen::default());
-        s.points = vec![sketch_core::Point::new(10.0, 10.0, 0.2), sketch_core::Point::new(200.0, 90.0, 0.9)];
+        let mut s = coolmus_core::Stroke::new(coolmus_core::Pen::default());
+        s.points = vec![coolmus_core::Point::new(10.0, 10.0, 0.2), coolmus_core::Point::new(200.0, 90.0, 0.9)];
         page.strokes.push(s);
-        let mut hl = sketch_core::Stroke::new(sketch_core::Pen { style: sketch_core::PenStyle::Highlighter, ..Default::default() });
-        hl.points = vec![sketch_core::Point::new(10.0, 50.0, 1.0), sketch_core::Point::new(200.0, 50.0, 1.0)];
+        let mut hl = coolmus_core::Stroke::new(coolmus_core::Pen { style: coolmus_core::PenStyle::Highlighter, ..Default::default() });
+        hl.points = vec![coolmus_core::Point::new(10.0, 50.0, 1.0), coolmus_core::Point::new(200.0, 50.0, 1.0)];
         page.strokes.push(hl);
         page
     }

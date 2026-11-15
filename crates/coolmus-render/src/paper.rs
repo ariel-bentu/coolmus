@@ -1,4 +1,4 @@
-use sketch_core::{Color, Paper};
+use coolmus_core::{Color, Paper};
 
 pub const RULE_SPACING: f32 = 32.0;
 pub const GRID_SPACING: f32 = 24.0;

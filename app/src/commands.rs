@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use base64::Engine;
 use clipboard_rs::{Clipboard, ClipboardContext};
 use serde::Serialize;
-use sketch_core::{Page, Paper};
-use sketch_store::{Change, FolderLabel, Hit, Node};
+use coolmus_core::{Page, Paper};
+use coolmus_store::{Change, FolderLabel, Hit, Node};
 use tauri::State;
 
 use crate::backend::{AppState, CmdResult};
@@ -46,7 +46,7 @@ pub async fn get_state(state: State<'_, AppState>) -> CmdResult<Snapshot> {
     Ok(Snapshot { tree: tree_of(&state), settings: state.settings().clone() })
 }
 
-/// Rescans the roots (they also change outside Sketcher: Explorer, OneDrive).
+/// Rescans the roots (they also change outside Coolmus: Explorer, OneDrive).
 #[tauri::command]
 pub async fn get_tree(state: State<'_, AppState>) -> CmdResult<Tree> {
     Ok(tree_of(&state))
@@ -61,7 +61,7 @@ pub async fn search(state: State<'_, AppState>, query: String) -> CmdResult<Vec<
 #[serde(rename_all = "camelCase")]
 pub struct LoadedPage {
     page: Page,
-    /// What other programs changed since Sketcher saved the page:
+    /// What other programs changed since Coolmus saved the page:
     /// `contentRedrawn`, `annotations`, `pagesAdded`.
     changes: Vec<&'static str>,
 }
@@ -81,7 +81,7 @@ pub async fn load_page(state: State<'_, AppState>, path: String) -> CmdResult<Lo
     Ok(LoadedPage { page: loaded.page, changes })
 }
 
-/// The PDF a page is drawn on (without Sketcher's layer), as raw bytes.
+/// The PDF a page is drawn on (without Coolmus's layer), as raw bytes.
 #[tauri::command]
 pub async fn page_background(state: State<'_, AppState>, path: String) -> CmdResult<tauri::ipc::Response> {
     Ok(tauri::ipc::Response::new(state.store().background(&path).map_err(err)?))
@@ -137,7 +137,7 @@ fn clipboard() -> CmdResult<ClipboardContext> {
 }
 
 /// Puts files and folders on the system clipboard, so they can be pasted in
-/// Explorer or back into Sketcher.
+/// Explorer or back into Coolmus.
 #[tauri::command]
 pub fn copy_items(state: State<AppState>, paths: Vec<String>) -> CmdResult<()> {
     let store = state.store();
@@ -149,13 +149,13 @@ pub fn copy_items(state: State<AppState>, paths: Vec<String>) -> CmdResult<()> {
 #[serde(rename_all = "camelCase")]
 pub struct Pasted {
     paths: Vec<String>,
-    /// The items were cut in Sketcher and moved (else copied).
+    /// The items were cut in Coolmus and moved (else copied).
     moved: bool,
 }
 
 /// Pastes the files on the system clipboard into `folder`: copied from
-/// Explorer or Sketcher, they are copied; if they are exactly the items
-/// `cut` in Sketcher, they are moved (paths in the same order as `cut`).
+/// Explorer or Coolmus, they are copied; if they are exactly the items
+/// `cut` in Coolmus, they are moved (paths in the same order as `cut`).
 #[tauri::command]
 pub async fn paste_items(state: State<'_, AppState>, folder: String, cut: Vec<String>) -> CmdResult<Pasted> {
     let files: Vec<PathBuf> = clipboard()?.get_files().unwrap_or_default().into_iter().map(PathBuf::from).collect();
@@ -251,7 +251,7 @@ pub fn reveal(state: State<AppState>, path: String) -> CmdResult<()> {
     shown.map_err(err)
 }
 
-/// Opens a file with its default program (e.g. a PDF that isn't a Sketcher page).
+/// Opens a file with its default program (e.g. a PDF that isn't a Coolmus page).
 #[tauri::command]
 pub fn open_external(state: State<AppState>, path: String) -> CmdResult<()> {
     let target = state.store().native(&path).map_err(err)?;
@@ -274,15 +274,15 @@ pub struct Imported {
 }
 
 /// Writes `entry` as folders and pages, calling `progress` after each page.
-fn write_import(store: &mut sketch_store::Store, entry: &onenote_import::Entry, folder: &str, progress: &mut dyn FnMut()) -> Result<String, sketch_store::StoreError> {
+fn write_import(store: &mut coolmus_store::Store, entry: &onenote_import::Entry, folder: &str, progress: &mut dyn FnMut()) -> Result<String, coolmus_store::StoreError> {
     use onenote_import::Entry;
-    let fallback = |name: &str| if sketch_store::sanitize_name(name).is_ok() { name.to_string() } else { "OneNote".into() };
+    let fallback = |name: &str| if coolmus_store::sanitize_name(name).is_ok() { name.to_string() } else { "OneNote".into() };
     match entry {
         Entry::Section { name, pages } => {
             let dir = store.create_folder(folder, &fallback(name))?;
             for page in pages {
                 let mut page = page.clone();
-                if sketch_store::sanitize_name(&page.title).is_err() {
+                if coolmus_store::sanitize_name(&page.title).is_err() {
                     page.title = "Untitled".into();
                 }
                 store.create_page(&dir, &page)?;

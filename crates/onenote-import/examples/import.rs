@@ -1,11 +1,11 @@
-//! Imports OneNote files into a folder as Sketcher pages, like the app does.
+//! Imports OneNote files into a folder as Coolmus pages, like the app does.
 //!
 //!     cargo run -p onenote-import --example import -- <out dir> <file.onetoc2|file.one> …
 
 use std::path::PathBuf;
 
 use onenote_import::Entry;
-use sketch_store::{api_path, Store};
+use coolmus_store::{api_path, Store};
 
 fn write(store: &mut Store, entry: &Entry, folder: &str) {
     match entry {
@@ -29,7 +29,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let out = PathBuf::from(&args[0]);
     std::fs::create_dir_all(&out).unwrap();
-    let mut store = Store::new(vec![out.clone()], sketch_pdf::system_font().unwrap_or_default());
+    let mut store = Store::new(vec![out.clone()], coolmus_pdf::system_font().unwrap_or_default());
     for file in &args[1..] {
         let entry = onenote_import::read_file(file.as_ref()).unwrap();
         println!("{file}: {} pages", entry.page_count());

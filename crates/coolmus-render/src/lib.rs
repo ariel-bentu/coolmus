@@ -10,7 +10,7 @@ pub mod tessellate;
 
 pub use tessellate::{tessellate_stroke, Mesh};
 
-use sketch_core::{PenStyle, Stroke};
+use coolmus_core::{PenStyle, Stroke};
 
 /// Strokes in paint order: highlighters underneath, everything else on top,
 /// preserving the original order within each group.

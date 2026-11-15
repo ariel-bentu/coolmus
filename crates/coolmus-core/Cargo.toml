@@ -1,6 +1,6 @@
 [package]
-name = "sketch-core"
-description = "Pure data model for Sketcher: pages, strokes, pens, tags, undo history, hit testing."
+name = "coolmus-core"
+description = "Pure data model for Coolmus: pages, strokes, pens, tags, undo history, hit testing."
 version.workspace = true
 edition.workspace = true
 license.workspace = true

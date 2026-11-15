@@ -10,7 +10,7 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     tauri::Builder::default()
         // The window only ever shows the app: a file dropped on it or a stray
-        // link would otherwise replace Sketcher with that document.
+        // link would otherwise replace Coolmus with that document.
         .plugin(
             tauri::plugin::Builder::<tauri::Wry>::new("stay-in-app")
                 .on_navigation(|_, url| is_app_url(url))
@@ -47,7 +47,7 @@ fn main() {
             commands::import_onenote,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running Sketcher");
+        .expect("error while running Coolmus");
 }
 
 /// The app's own pages: tauri://localhost on macOS and Linux,

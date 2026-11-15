@@ -2,7 +2,7 @@
 
 use std::sync::{Mutex, MutexGuard};
 
-use sketch_store::Store;
+use coolmus_store::Store;
 
 use crate::settings::Settings;
 
@@ -20,7 +20,7 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 impl AppState {
     pub fn init() -> Self {
         let settings = Settings::load();
-        let font = sketch_pdf::system_font().unwrap_or_else(|| {
+        let font = coolmus_pdf::system_font().unwrap_or_else(|| {
             log::error!("no system font found: text boxes can't be saved");
             Vec::new()
         });

@@ -1,21 +1,21 @@
 [package]
-name = "sketcher"
+name = "coolmus"
 description = "Fast pen sketching app: pages as PDF files in your own folders, with tags and OneNote import."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "sketcher"
+name = "coolmus"
 path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-sketch-core.workspace = true
-sketch-store.workspace = true
-sketch-pdf.workspace = true
+coolmus-core.workspace = true
+coolmus-store.workspace = true
+coolmus-pdf.workspace = true
 onenote-import.workspace = true
 serde.workspace = true
 serde_json.workspace = true

@@ -5,7 +5,7 @@
 //!   Work/
 //!     Bridges/
 //!       Plan.pdf                one page: a normal PDF that carries its own
-//!                               editable page data (see `sketch-pdf`)
+//!                               editable page data (see `coolmus-pdf`)
 //!   Manual.pdf                  any other PDF is listed too
 //! ```
 //! The folder tree *is* the organization: there is no index file, so Explorer,
@@ -21,16 +21,16 @@ use std::path::{Component, Path, PathBuf};
 use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
-use sketch_core::tags::Query;
-use sketch_core::Page;
-pub use sketch_pdf::Change;
+use coolmus_core::tags::Query;
+use coolmus_core::Page;
+pub use coolmus_pdf::Change;
 
 /// File extension of page files.
 pub const PAGE_EXT: &str = "pdf";
 
 /// Hidden per-folder settings file. It lives inside the folder, so it moves,
 /// syncs and is deleted together with it.
-pub const FOLDER_INFO: &str = ".sketcher-folder.json";
+pub const FOLDER_INFO: &str = ".coolmus-folder.json";
 
 /// A display label for a folder that is calculated rather than typed, so it
 /// can change over time while the folder's own name stays fixed.
@@ -54,7 +54,7 @@ pub enum StoreError {
     #[error("I/O error at {path}: {source}")]
     Io { path: PathBuf, source: std::io::Error },
     #[error("{path}: {source}")]
-    Pdf { path: PathBuf, source: sketch_pdf::Error },
+    Pdf { path: PathBuf, source: coolmus_pdf::Error },
     /// A path from the caller that is not inside one of the roots.
     #[error("invalidPath")]
     InvalidPath,
@@ -70,14 +70,14 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
-/// `SKETCHER_DATA_DIR` if set, else `Documents/Sketcher`.
+/// `COOLMUS_DATA_DIR` if set, else `Documents/Coolmus`.
 pub fn default_root() -> PathBuf {
-    if let Some(dir) = std::env::var_os("SKETCHER_DATA_DIR") {
+    if let Some(dir) = std::env::var_os("COOLMUS_DATA_DIR") {
         return PathBuf::from(dir);
     }
     directories::UserDirs::new()
-        .and_then(|u| u.document_dir().map(|d| d.join("Sketcher")))
-        .unwrap_or_else(|| PathBuf::from("Sketcher"))
+        .and_then(|u| u.document_dir().map(|d| d.join("Coolmus")))
+        .unwrap_or_else(|| PathBuf::from("Coolmus"))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -85,7 +85,7 @@ pub fn default_root() -> PathBuf {
 pub enum NodeKind {
     Root,
     Folder,
-    /// A PDF with Sketcher page data.
+    /// A PDF with Coolmus page data.
     Page,
     /// Any other PDF.
     Pdf,
@@ -125,7 +125,7 @@ pub struct Hit {
     pub tags: Vec<String>,
 }
 
-/// A page as loaded, with what other programs changed since Sketcher saved it.
+/// A page as loaded, with what other programs changed since Coolmus saved it.
 #[derive(Debug)]
 pub struct Loaded {
     pub page: Page,
@@ -150,7 +150,7 @@ struct Header {
 pub struct Store {
     roots: Vec<PathBuf>,
     index: HashMap<String, Entry>,
-    /// Font for text in written PDFs (see [`sketch_pdf::system_font`]).
+    /// Font for text in written PDFs (see [`coolmus_pdf::system_font`]).
     font: Vec<u8>,
 }
 
@@ -245,7 +245,7 @@ fn copy_all(from: &Path, to: &Path) -> Result<()> {
 }
 
 fn index_entry(path: &Path, stamp: (u64, u64)) -> Entry {
-    let data = fs::read(path).ok().and_then(|b| sketch_pdf::page_data(&b).ok().flatten());
+    let data = fs::read(path).ok().and_then(|b| coolmus_pdf::page_data(&b).ok().flatten());
     let header = data.and_then(|json| serde_json::from_slice::<Header>(&json).ok());
     Entry { stamp, is_page: header.is_some(), tags: header.map(|h| h.tags).unwrap_or_default() }
 }
@@ -397,7 +397,7 @@ impl Store {
         hits.into_iter().map(|h| h.1).collect()
     }
 
-    /// Sketcher pages directly inside `folder`, in tree order.
+    /// Coolmus pages directly inside `folder`, in tree order.
     pub fn pages_in(&mut self, folder: &str) -> Result<Vec<String>> {
         let dir = self.resolve(folder)?;
         let prefix = format!("{}/", api_path(&dir));
@@ -417,13 +417,13 @@ impl Store {
     pub fn load_page(&self, path: &str) -> Result<Loaded> {
         let file = self.resolve(path)?;
         let bytes = fs::read(&file).map_err(io_err(&file))?;
-        let opened = sketch_pdf::read(&bytes).map_err(|source| StoreError::Pdf { path: file.clone(), source })?;
+        let opened = coolmus_pdf::read(&bytes).map_err(|source| StoreError::Pdf { path: file.clone(), source })?;
         let (mut page, changes) = match opened {
-            sketch_pdf::Opened::Intact(page) => (page, Vec::new()),
-            sketch_pdf::Opened::Changed { page, changes } => (page, changes),
+            coolmus_pdf::Opened::Intact(page) => (page, Vec::new()),
+            coolmus_pdf::Opened::Changed { page, changes } => (page, changes),
             // Any other PDF opens as a page to draw on; the file changes only when saved.
-            sketch_pdf::Opened::Foreign => {
-                let background = sketch_pdf::background(&bytes).map_err(|source| StoreError::Pdf { path: file.clone(), source })?;
+            coolmus_pdf::Opened::Foreign => {
+                let background = coolmus_pdf::background(&bytes).map_err(|source| StoreError::Pdf { path: file.clone(), source })?;
                 (Page::on_background("", background), Vec::new())
             }
         };
@@ -435,8 +435,8 @@ impl Store {
         let pdf_err = |source| StoreError::Pdf { path: file.to_path_buf(), source };
         let bytes = match page.background {
             // Drawn on another PDF: the file itself is the background.
-            Some(_) => sketch_pdf::write_over(&fs::read(file).map_err(io_err(file))?, page, &self.font).map_err(pdf_err)?,
-            None => sketch_pdf::write(page, &self.font).map_err(pdf_err)?,
+            Some(_) => coolmus_pdf::write_over(&fs::read(file).map_err(io_err(file))?, page, &self.font).map_err(pdf_err)?,
+            None => coolmus_pdf::write(page, &self.font).map_err(pdf_err)?,
         };
         write_atomic(file, &bytes)?;
         let stamp = fs::metadata(file).map(|m| stamp_of(&m)).unwrap_or_default();
@@ -454,12 +454,12 @@ impl Store {
         self.write_page(&file, page)
     }
 
-    /// The PDF a page is drawn on, without Sketcher's layer, for showing
+    /// The PDF a page is drawn on, without Coolmus's layer, for showing
     /// under the editable one.
     pub fn background(&self, path: &str) -> Result<Vec<u8>> {
         let file = self.resolve_item(path)?;
         let bytes = fs::read(&file).map_err(io_err(&file))?;
-        sketch_pdf::strip(&bytes).map_err(|source| StoreError::Pdf { path: file, source })
+        coolmus_pdf::strip(&bytes).map_err(|source| StoreError::Pdf { path: file, source })
     }
 
     /// Writes `page` as a new file named after `page.title` inside `folder`.
@@ -473,7 +473,7 @@ impl Store {
     /// One printable PDF of the given pages, in order.
     pub fn print(&self, paths: &[String], title: &str) -> Result<Vec<u8>> {
         let pages = paths.iter().map(|p| self.load_page(p).map(|l| l.page)).collect::<Result<Vec<_>>>()?;
-        sketch_pdf::print(&pages, title, &self.font).map_err(|source| StoreError::Pdf { path: PathBuf::from(title), source })
+        coolmus_pdf::print(&pages, title, &self.font).map_err(|source| StoreError::Pdf { path: PathBuf::from(title), source })
     }
 
     // ---------- folders & files ----------
@@ -612,7 +612,7 @@ mod tests {
     use super::*;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("sketcher-test-{name}-{}", sketch_core::new_id()));
+        let d = std::env::temp_dir().join(format!("coolmus-test-{name}-{}", coolmus_core::new_id()));
         fs::create_dir_all(&d).unwrap();
         d
     }
@@ -719,15 +719,15 @@ mod tests {
         assert_eq!(fs::read(dir.join("Manual.PDF")).unwrap(), original);
         assert_eq!(store.background(&path).unwrap(), original);
 
-        // Saving adds Sketcher's layer; the file becomes a page and still shows the original under it.
-        let mut s = sketch_core::Stroke::new(sketch_core::Pen::default());
-        s.points = vec![sketch_core::Point::new(1.0, 1.0, 1.0), sketch_core::Point::new(9.0, 9.0, 1.0)];
+        // Saving adds Coolmus's layer; the file becomes a page and still shows the original under it.
+        let mut s = coolmus_core::Stroke::new(coolmus_core::Pen::default());
+        s.points = vec![coolmus_core::Point::new(1.0, 1.0, 1.0), coolmus_core::Point::new(9.0, 9.0, 1.0)];
         page.strokes.push(s);
         store.save_page(&path, &page).unwrap();
         assert_eq!(store.tree()[0].children[0].kind, NodeKind::Page);
         assert_eq!(store.load_page(&path).unwrap().page.strokes.len(), 1);
         let under = store.background(&path).unwrap();
-        assert!(sketch_pdf::page_data(&under).unwrap().is_none());
+        assert!(coolmus_pdf::page_data(&under).unwrap().is_none());
         fs::remove_dir_all(&dir).unwrap();
     }
 

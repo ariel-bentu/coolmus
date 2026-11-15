@@ -1,6 +1,6 @@
 use std::f32::consts::PI;
 
-use sketch_core::{Pen, PenStyle, Point, Stroke};
+use coolmus_core::{Pen, PenStyle, Point, Stroke};
 
 /// A single-colored triangle mesh in page coordinates.
 #[derive(Debug, Clone, Default)]

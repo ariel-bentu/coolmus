@@ -178,7 +178,7 @@ impl Paper {
 }
 
 /// Identifies a page file and its layout version.
-pub const PAGE_FORMAT: &str = "sketcher/page";
+pub const PAGE_FORMAT: &str = "coolmus/page";
 pub const PAGE_VERSION: u32 = 2;
 
 fn page_format() -> String {
@@ -407,7 +407,7 @@ mod tests {
         page.texts.push(TextBox { id: new_id(), x: 10.0, y: 20.0, width: 200.0, text: "שלום hello".into(), size: 18.0, color: Color::BLACK });
         page.images.push(ImageItem { id: new_id(), x: 0.0, y: 0.0, width: 50.0, height: 40.0, src: "data:image/png;base64,AAAA".into() });
         let json = serde_json::to_string(&page).unwrap();
-        assert!(json.starts_with(r#"{"format":"sketcher/page","version":2,"#), "{json}");
+        assert!(json.starts_with(r#"{"format":"coolmus/page","version":2,"#), "{json}");
         assert!(!json.contains("Plan"));
         let back: Page = serde_json::from_str(&json).unwrap();
         assert_eq!(back.texts, page.texts);

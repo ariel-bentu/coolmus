@@ -559,6 +559,74 @@ dependencies = [
 ]
 
 [[package]]
+name = "coolmus"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "clipboard-rs",
+ "coolmus-core",
+ "coolmus-pdf",
+ "coolmus-store",
+ "directories",
+ "env_logger",
+ "log",
+ "onenote-import",
+ "open",
+ "percent-encoding",
+ "rfd",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+]
+
+[[package]]
+name = "coolmus-core"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "coolmus-pdf"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "coolmus-core",
+ "coolmus-render",
+ "krilla",
+ "lopdf",
+ "rustybuzz",
+ "serde_json",
+ "thiserror 2.0.21",
+ "unicode-bidi",
+]
+
+[[package]]
+name = "coolmus-render"
+version = "0.1.0"
+dependencies = [
+ "coolmus-core",
+ "tiny-skia",
+]
+
+[[package]]
+name = "coolmus-store"
+version = "0.1.0"
+dependencies = [
+ "coolmus-core",
+ "coolmus-pdf",
+ "directories",
+ "lopdf",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "trash",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2793,10 +2861,10 @@ name = "onenote-import"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "coolmus-core",
+ "coolmus-pdf",
+ "coolmus-store",
  "onenote_parser",
- "sketch-core",
- "sketch-pdf",
- "sketch-store",
  "thiserror 2.0.21",
  "time",
  "typed-path",
@@ -3745,74 +3813,6 @@ name = "siphasher"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
-
-[[package]]
-name = "sketch-core"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "sketch-pdf"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "krilla",
- "lopdf",
- "rustybuzz",
- "serde_json",
- "sketch-core",
- "sketch-render",
- "thiserror 2.0.21",
- "unicode-bidi",
-]
-
-[[package]]
-name = "sketch-render"
-version = "0.1.0"
-dependencies = [
- "sketch-core",
- "tiny-skia",
-]
-
-[[package]]
-name = "sketch-store"
-version = "0.1.0"
-dependencies = [
- "directories",
- "lopdf",
- "serde",
- "serde_json",
- "sketch-core",
- "sketch-pdf",
- "thiserror 2.0.21",
- "trash",
-]
-
-[[package]]
-name = "sketcher"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "clipboard-rs",
- "directories",
- "env_logger",
- "log",
- "onenote-import",
- "open",
- "percent-encoding",
- "rfd",
- "serde",
- "serde_json",
- "sketch-core",
- "sketch-pdf",
- "sketch-store",
- "tauri",
- "tauri-build",
-]
 
 [[package]]
 name = "skrifa"

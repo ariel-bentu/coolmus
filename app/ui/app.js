@@ -1,4 +1,4 @@
-// Sketcher UI. Pages are PDF files in the user's folders, read and written by
+// Coolmus UI. Pages are PDF files in the user's folders, read and written by
 // the Rust backend; this module keeps the open page and its undo history,
 // autosaves, and wires the toolbar and the folder tree.
 
@@ -43,9 +43,9 @@ const ICONS = {
   revealFolder: icon('<path d="M3 6a1 1 0 011-1h5l2 2h9a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1z"/>'),
   exportPng: icon('<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9.5" r="1.6"/><path d="M4 19l5-5 4 4 3-3 4 4"/>'),
 };
-const OPEN_FOLDERS_KEY = 'sketcher.openFolders';
-const SIDEBAR_KEY = 'sketcher.sidebarHidden';
-const SIDEBAR_WIDTH_KEY = 'sketcher.sidebarWidth';
+const OPEN_FOLDERS_KEY = 'coolmus.openFolders';
+const SIDEBAR_KEY = 'coolmus.sidebarHidden';
+const SIDEBAR_WIDTH_KEY = 'coolmus.sidebarWidth';
 
 const state = {
   tree: [], // root nodes
@@ -55,7 +55,7 @@ const state = {
   folder: '', // selected folder: where new pages go
   treeSel: null, // last tree item clicked: target of Ctrl+C / Ctrl+X / Ctrl+V
   focus: 'page', // 'tree' or 'page': where the keyboard's copy/paste applies
-  cut: [], // paths cut in Sketcher, moved by the next paste
+  cut: [], // paths cut in Coolmus, moved by the next paste
   openFolders: new Set(),
   search: '',
   tool: 'pen',
@@ -137,7 +137,7 @@ function remapAll(old, nu) {
 // Each page's zoom and scroll position, kept on this computer (not in the
 // file: just looking at a page shouldn't rewrite it, and positions depend on
 // the screen). Keyed by path, most recently used last.
-const VIEWS_KEY = 'sketcher.views';
+const VIEWS_KEY = 'coolmus.views';
 const MAX_VIEWS = 1000;
 let views = {};
 try {
@@ -359,7 +359,7 @@ window.addEventListener('beforeunload', () => {
   rememberView();
   saveNow();
 });
-// The folder may change outside Sketcher (Explorer, OneDrive): rescan on focus.
+// The folder may change outside Coolmus (Explorer, OneDrive): rescan on focus.
 window.addEventListener('focus', () => refreshTree());
 
 function setTree(tr) {
@@ -554,7 +554,7 @@ async function removeItem(node) {
 
 // ---------- files: clipboard, folders, printing ----------
 
-/** Puts items on the system clipboard (pasteable in Explorer too); a cut moves them on the next paste in Sketcher. */
+/** Puts items on the system clipboard (pasteable in Explorer too); a cut moves them on the next paste in Coolmus. */
 async function copyItems(paths, cut) {
   await saveNow();
   await call('copy_items', { paths });

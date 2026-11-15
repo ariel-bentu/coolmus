@@ -1,6 +1,6 @@
-# Sketcher
+# Coolmus
 
-A fast pen-sketching app for Windows. Every page is an ordinary **PDF file** in your own folders: anyone can open it in any PDF viewer, and in Sketcher its vector ink, text boxes and pictures stay fully editable.
+A fast pen-sketching app for Windows. Every page is an ordinary **PDF file** in your own folders: anyone can open it in any PDF viewer, and in Coolmus its vector ink, text boxes and pictures stay fully editable.
 
 ## Features
 
@@ -12,9 +12,9 @@ A fast pen-sketching app for Windows. Every page is an ordinary **PDF file** in 
 - **Pictures.** Add a picture from a file or the photo gallery, take one with the camera, paste one (Ctrl+V), or drop an image file on the page. Large photos are scaled down so page files stay small.
 - **A4 sheets, several per file.** A page file is a stack of A4 sheets; *Add page* in the page menu adds one, and each sheet is a page in the PDF and in print. Ink stays on the paper: strokes start only on a sheet and are cut at its edges, and the page never grows by itself. Scrolling stops at the first sheet's top and the last sheet's bottom, and a page narrower than the window stays centered.
 - **Paper.** Blank, Lined, Grid or Dotted paper per page.
-- **Your folders, as they are on disk.** Add one or more folders (for example `Documents\Sketcher` and a folder inside OneDrive); the sidebar shows them with their real subfolders and files. Create, rename, move (drag and drop between any of them, or *Move to folder…*) and delete pages and folders. Deleted items go to the Recycle Bin.
-- **Copy and paste with File Explorer.** Copy (Ctrl+C) a page or folder in Sketcher and paste it in Explorer, or copy files in Explorer and paste them into a Sketcher folder. Cut (Ctrl+X) and paste within Sketcher moves.
-- **Draw on any PDF.** Other PDFs in your folders (worksheets, scans, slides) open in Sketcher with their pages as the paper. What you add is a layer on top: the PDF's own content is never changed, and everyone still sees the PDF with your notes in any viewer.
+- **Your folders, as they are on disk.** Add one or more folders (for example `Documents\Coolmus` and a folder inside OneDrive); the sidebar shows them with their real subfolders and files. Create, rename, move (drag and drop between any of them, or *Move to folder…*) and delete pages and folders. Deleted items go to the Recycle Bin.
+- **Copy and paste with File Explorer.** Copy (Ctrl+C) a page or folder in Coolmus and paste it in Explorer, or copy files in Explorer and paste them into a Coolmus folder. Cut (Ctrl+X) and paste within Coolmus moves.
+- **Draw on any PDF.** Other PDFs in your folders (worksheets, scans, slides) open in Coolmus with their pages as the paper. What you add is a layer on top: the PDF's own content is never changed, and everyone still sees the PDF with your notes in any viewer.
 - **Print** a page (Ctrl+P), or all pages of a folder.
 - **Import from OneNote files.** Right-click a folder → *Import from OneNote…* and pick a notebook's `Open Notebook.onetoc2` or a single section `.one`. See below.
 - **Calculated folder labels.** A folder can keep a fixed name (for example `class of 2021`) and show a label calculated from the date, for example `כיתה ג-3` this school year and `כיתה ד-3` from next September. See below.
@@ -40,13 +40,13 @@ A fast pen-sketching app for Windows. Every page is an ordinary **PDF file** in 
 
 ## Where your pages live
 
-Sketcher shows the folders you add in ⚙ Settings (by default `Documents\Sketcher`), exactly as they are on disk. There is no separate index or database: you can copy, back up or reorganize them in Explorer, and Sketcher picks up the changes. A folder inside OneDrive is synced by OneDrive. Removing a folder from the list doesn't touch it on disk.
+Coolmus shows the folders you add in ⚙ Settings (by default `Documents\Coolmus`), exactly as they are on disk. There is no separate index or database: you can copy, back up or reorganize them in Explorer, and Coolmus picks up the changes. A folder inside OneDrive is synced by OneDrive. Removing a folder from the list doesn't touch it on disk.
 
-Each page is one file, `<page name>.pdf`, so the page's name is the file's name. It is a normal one-page PDF, drawn as vectors: the paper, the ink (pressure-width strokes as filled outlines), pictures, and text boxes as real, selectable and searchable text with the system font embedded. Inside, as a PDF attachment named `sketcher-page.json`, it carries the page itself:
+Each page is one file, `<page name>.pdf`, so the page's name is the file's name. It is a normal one-page PDF, drawn as vectors: the paper, the ink (pressure-width strokes as filled outlines), pictures, and text boxes as real, selectable and searchable text with the system font embedded. Inside, as a PDF attachment named `coolmus-page.json`, it carries the page itself:
 
 ```jsonc
 {
-  "format": "sketcher/page", "version": 2,
+  "format": "coolmus/page", "version": 2,
   "id": "…", "tags": ["work"], "paper": "Grid", "width": 794, "height": 1123, "sheets": 2,
   "strokes": [ { "id": "…", "pen": { "color": {"r":26,"g":115,"b":232,"a":255}, "width": 3, "style": "Solid", "pressure_sensitive": true },
                  "points": [[120.5, 80.25, 0.62], …] } ],          // [x, y, pressure]
@@ -56,17 +56,17 @@ Each page is one file, `<page name>.pdf`, so the page's name is the file's name.
 }
 ```
 
-Sketcher reads the attachment back, so nothing is lost between edits; the drawing is regenerated from it on every save. Coordinates are in pixels at 96 DPI. `width` × `height` is one sheet (A4 is 794 × 1123); the sheets are stacked top to bottom 24 units apart, and all content shares that one coordinate space; ink stays vector data with pressure, never a picture.
+Coolmus reads the attachment back, so nothing is lost between edits; the drawing is regenerated from it on every save. Coordinates are in pixels at 96 DPI. `width` × `height` is one sheet (A4 is 794 × 1123); the sheets are stacked top to bottom 24 units apart, and all content shares that one coordinate space; ink stays vector data with pressure, never a picture.
 
-**Edited in another program?** The page records a fingerprint of what Sketcher drew. If someone adds comments in Acrobat or otherwise changes the page, Sketcher notices when you open it and asks: open it in your PDF viewer (keeping their changes), or edit it in Sketcher (its next save replaces those changes). Re-saving a page unchanged in Preview or Acrobat is fine.
+**Edited in another program?** The page records a fingerprint of what Coolmus drew. If someone adds comments in Acrobat or otherwise changes the page, Coolmus notices when you open it and asks: open it in your PDF viewer (keeping their changes), or edit it in Coolmus (its next save replaces those changes). Re-saving a page unchanged in Preview or Acrobat is fine.
 
-**Drawing on another PDF.** Opening a PDF Sketcher didn't make shows its pages, as they are, as the sheets; the file isn't touched until you change something. Saving keeps every part of the PDF (its pages, comments, links, attachments) and adds two things: your layer, drawn over each page you drew on, and the page data. Saving again replaces the layer rather than adding another, and Sketcher can always take it off to get the PDF back as it was (that's what it shows under your editable layer). The page data records the size of each of the PDF's pages under `"background"`. Encrypted PDFs can be viewed but not saved.
+**Drawing on another PDF.** Opening a PDF Coolmus didn't make shows its pages, as they are, as the sheets; the file isn't touched until you change something. Saving keeps every part of the PDF (its pages, comments, links, attachments) and adds two things: your layer, drawn over each page you drew on, and the page data. Saving again replaces the layer rather than adding another, and Coolmus can always take it off to get the PDF back as it was (that's what it shows under your editable layer). The page data records the size of each of the PDF's pages under `"background"`. Encrypted PDFs can be viewed but not saved.
 
-A folder with a calculated label also contains a hidden `.sketcher-folder.json`, so the label moves and syncs with the folder.
+A folder with a calculated label also contains a hidden `.coolmus-folder.json`, so the label moves and syncs with the folder.
 
 ### Importing from OneNote
 
-Sketcher reads OneNote's own files, so no Microsoft sign-in is needed. Get them by downloading a notebook from OneDrive (a `.zip` with one `.one` per section and an `Open Notebook.onetoc2`; if the web page offers no download, OneNote for Windows can export a section or notebook too), or use the `.one` files OneNote desktop keeps.
+Coolmus reads OneNote's own files, so no Microsoft sign-in is needed. Get them by downloading a notebook from OneDrive (a `.zip` with one `.one` per section and an `Open Notebook.onetoc2`; if the web page offers no download, OneNote for Windows can export a section or notebook too), or use the `.one` files OneNote desktop keeps.
 
 Pick `Open Notebook.onetoc2` to import a whole notebook, or one `.one` file for a single section. The notebook becomes a folder, each section group and section a subfolder, and each page a page file named after its title. OneNote's recycle bin is skipped. The import is a copy: the OneNote files are not changed.
 
@@ -81,21 +81,21 @@ Pick `Open Notebook.onetoc2` to import a whole notebook, or one `.one` file for 
 
 ### Calculated folder labels
 
-Right-click a folder → **Calculated label…**. The only pattern so far is **School class**: choose the grade the class is in *this* school year and its class number, and Sketcher remembers the year the class started first grade. The school year changes on September 1, so the tree shows `כיתה ג-3` until the end of August and `כיתה ד-3` from September. The wording is a template: `{grade}` is the grade letter (א … יב, then `בוגרים` after 12th grade, `גן` before 1st) and `{n}` is the class number. The folder's own name never changes.
+Right-click a folder → **Calculated label…**. The only pattern so far is **School class**: choose the grade the class is in *this* school year and its class number, and Coolmus remembers the year the class started first grade. The school year changes on September 1, so the tree shows `כיתה ג-3` until the end of August and `כיתה ד-3` from September. The wording is a template: `{grade}` is the grade letter (א … יב, then `בוגרים` after 12th grade, `גן` before 1st) and `{n}` is the class number. The folder's own name never changes.
 
 ## Architecture
 
 Each part of the app is a separate crate. Dependencies point in one direction only.
 
 ```
-crates/sketch-core    Pure data model: Page (strokes, text boxes, pictures), Pen, tags & search,
+crates/coolmus-core    Pure data model: Page (strokes, text boxes, pictures), Pen, tags & search,
                       hit-testing, input smoothing. No I/O, no UI.
-crates/sketch-render  Stroke → triangle meshes, stroke → outline → PNG (tiny-skia), paper patterns.
-crates/sketch-pdf     Page ⇄ PDF: draws a page as vector PDF (krilla, with bidi text layout),
+crates/coolmus-render  Stroke → triangle meshes, stroke → outline → PNG (tiny-skia), paper patterns.
+crates/coolmus-pdf     Page ⇄ PDF: draws a page as vector PDF (krilla, with bidi text layout),
                       attaches and reads back the page data, detects edits by other programs;
                       adds and removes a page's layer on another PDF (lopdf).
-crates/onenote-import OneNote .one / .onetoc2 files → Sketcher pages (via onenote_parser).
-crates/sketch-store   The root folders: tree scan, page files, rename/move/copy/trash, tag index,
+crates/onenote-import OneNote .one / .onetoc2 files → Coolmus pages (via onenote_parser).
+crates/coolmus-store   The root folders: tree scan, page files, rename/move/copy/trash, tag index,
                       folder labels.
 app/                  Tauri 2 desktop shell (Rust): commands over the crates above, system
                       clipboard file lists, printing, settings.
@@ -106,7 +106,7 @@ app/ui/               The interface: plain HTML/CSS/JavaScript with no build ste
                       rendered with pdf.js from vendor/pdfjs), i18n.js.
 ```
 
-`sketch-core` doesn't depend on any other crate here. The interface only talks to the backend through Tauri commands, and all paths it sends are checked so they can't leave the folders you added.
+`coolmus-core` doesn't depend on any other crate here. The interface only talks to the backend through Tauri commands, and all paths it sends are checked so they can't leave the folders you added.
 
 **Why a web view for the interface?** Rust-native UI toolkits such as egui can't yet lay out right-to-left (bidirectional) text, so Hebrew would render backwards. WebView2 (Chromium, built into Windows 10 and 11) handles Hebrew and RTL fully and supports pen input well.
 
@@ -117,8 +117,8 @@ app/ui/               The interface: plain HTML/CSS/JavaScript with no build ste
 You need Rust 1.85 or later. On Windows, also install the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/); it comes preinstalled on Windows 10 and 11. No Node.js or npm is needed.
 
 ```powershell
-cargo run --release -p sketcher        # run
-cargo build --release -p sketcher      # target\release\sketcher.exe
+cargo run --release -p coolmus        # run
+cargo build --release -p coolmus      # target\release\coolmus.exe
 cargo test --workspace
 ```
 
@@ -126,4 +126,8 @@ To build an installer (.msi or setup.exe), install the Tauri CLI with `cargo ins
 
 Release builds on Windows don't open a console window. The app also builds and runs on macOS and Linux, which is handy for development.
 
-**Data locations.** Pages are in the folders you add (default `Documents\Sketcher`; the `SKETCHER_DATA_DIR` environment variable overrides the default). Settings are in `%APPDATA%\Sketcher\config`.
+**Data locations.** Pages are in the folders you add (default `Documents\Coolmus`; the `COOLMUS_DATA_DIR` environment variable overrides the default). Settings are in `%APPDATA%\Coolmus\config`.
+
+## License
+
+MIT; see [LICENSE](LICENSE). The bundled [pdf.js](https://github.com/mozilla/pdf.js) in `app/ui/vendor/pdfjs` is Apache-2.0, with its own license files.
