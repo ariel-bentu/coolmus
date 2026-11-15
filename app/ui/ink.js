@@ -191,6 +191,49 @@ export function hit(stroke, x, y, radius) {
   return false;
 }
 
+/**
+ * What is left of `stroke` after an eraser of radius `radius` at (cx, cy):
+ * null if it doesn't touch the stroke, else the point lists of the pieces on
+ * either side (empty if nothing is left). The stroke is cut where its center
+ * line meets the eraser's reach (the radius plus half the pen width, as in
+ * `hit`), so the ink inside the eraser goes.
+ */
+export function cutStroke(stroke, cx, cy, radius) {
+  if (!hit(stroke, cx, cy, radius)) return null;
+  const reach = radius + stroke.pen.width * 0.5;
+  const r2 = reach * reach;
+  const pts = stroke.points;
+  const isOut = (p) => (p[0] - cx) ** 2 + (p[1] - cy) ** 2 >= r2;
+  const at = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+  const pieces = [];
+  let out = isOut(pts[0]);
+  let cur = out ? [pts[0]] : [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i], b = pts[i + 1];
+    // Where the segment crosses the eraser's edge: |a + t(b - a) - c| = reach.
+    const dx = b[0] - a[0], dy = b[1] - a[1], fx = a[0] - cx, fy = a[1] - cy;
+    const A = dx * dx + dy * dy, B = 2 * (fx * dx + fy * dy), C = fx * fx + fy * fy - r2;
+    const disc = B * B - 4 * A * C;
+    if (A > 1e-12 && disc > 0) {
+      const sq = Math.sqrt(disc);
+      for (const t of [(-B - sq) / (2 * A), (-B + sq) / (2 * A)]) {
+        if (t <= 0 || t >= 1) continue;
+        if (out) {
+          cur.push(at(a, b, t)); // into the eraser: this piece ends here
+          pieces.push(cur);
+          cur = [];
+        } else cur = [at(a, b, t)]; // out of it: a new piece starts
+        out = !out;
+      }
+    }
+    if (out) cur.push(b);
+  }
+  if (out) pieces.push(cur);
+  // Crumbs too small to see are dropped.
+  const length = (ps) => ps.reduce((sum, p, i) => (i ? sum + Math.hypot(p[0] - ps[i - 1][0], p[1] - ps[i - 1][1]) : 0), 0);
+  return pieces.filter((ps) => ps.length > 1 && length(ps) > 0.5);
+}
+
 /** Low-latency exponential smoothing with a minimum-distance filter. */
 export class Smoother {
   constructor(strength, minDistance) {

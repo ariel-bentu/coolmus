@@ -11,7 +11,7 @@
 // applies it (which is what makes undo uniform).
 
 import * as bg from './background.js';
-import { PAPER_COLOR, bounds, drawPaper, effectiveColor, hit, onSheet, sheetRects, SHEET_GAP, Smoother, strokePath, totalHeight } from './ink.js';
+import { PAPER_COLOR, bounds, cutStroke, drawPaper, effectiveColor, hit, onSheet, sheetRects, SHEET_GAP, Smoother, strokePath, totalHeight } from './ink.js';
 import { t } from './i18n.js';
 
 const HANDLE = 16; // resize handle size, screen px
@@ -58,7 +58,6 @@ export class SketchCanvas {
     this.pictures = new Map(); // image src → HTMLImageElement
     this.textEls = new Map(); // text id → element
     this.textsRef = null;
-    this.hidden = new Set(); // strokes being erased
     this.selection = new Set(); // ids of selected strokes, texts and images
     this.drag = null; // move/resize preview: { dx, dy, s, ax, ay, width? }
     this.marquee = null;
@@ -83,7 +82,6 @@ export class SketchCanvas {
   setPage(page, view = null) {
     this.endTextEdit();
     this.page = page;
-    this.hidden.clear();
     this.selection.clear();
     this.drag = null;
     this.gesture = null;
@@ -334,11 +332,65 @@ export class SketchCanvas {
     });
     ta.addEventListener('pointerdown', (e) => e.stopPropagation());
     this.textLayer.append(ta);
-    this.editing = { box, ta };
+    const grip = this.textGrip();
+    this.textLayer.append(grip);
+    this.editing = { box, ta, grip };
+    this.placeGrip();
     this.selectionChanged(); // the toolbar shows this text's color and size
     this.requestRender();
     grow();
     ta.focus();
+  }
+
+  /**
+   * The handle for moving the text box being typed in: dragging it moves the
+   * box while the typing goes on.
+   */
+  textGrip() {
+    const grip = document.createElement('div');
+    grip.className = 'textGrip';
+    grip.title = t('moveText');
+    grip.innerHTML = ICONS.move;
+    // Keep the focus (and the caret) in the text box.
+    grip.addEventListener('mousedown', (e) => e.preventDefault());
+    grip.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const ed = this.editing;
+      if (!ed) return;
+      grip.setPointerCapture(e.pointerId);
+      const start = { x: e.clientX, y: e.clientY, bx: ed.box.x, by: ed.box.y };
+      const move = (ev) => {
+        ed.box = { ...ed.box, x: Math.round(start.bx + (ev.clientX - start.x) / this.zoom), y: Math.round(start.by + (ev.clientY - start.y) / this.zoom) };
+        Object.assign(ed.ta.style, { left: ed.box.x + 'px', top: ed.box.y + 'px' });
+        this.placeGrip();
+      };
+      const up = () => {
+        grip.removeEventListener('pointermove', move);
+        ed.ta.focus();
+      };
+      grip.addEventListener('pointermove', move);
+      grip.addEventListener('pointerup', up, { once: true });
+      grip.addEventListener('pointercancel', up, { once: true });
+    });
+    return grip;
+  }
+
+  /**
+   * Puts the move handle just outside the open box's top corner (left in a
+   * left-to-right interface, right in Hebrew), the same size at any zoom.
+   */
+  placeGrip() {
+    const ed = this.editing;
+    if (!ed) return;
+    const size = 24 / this.zoom;
+    const rtl = document.documentElement.dir === 'rtl';
+    Object.assign(ed.grip.style, {
+      width: size + 'px',
+      height: size + 'px',
+      left: (rtl ? ed.box.x + ed.box.width + 2 / this.zoom : ed.box.x - size - 2 / this.zoom) + 'px',
+      top: ed.box.y - size - 2 / this.zoom + 'px',
+    });
   }
 
   /**
@@ -363,13 +415,14 @@ export class SketchCanvas {
     this.editing = null; // first: removing the focused element fires blur again
     const text = e.ta.value.replace(/\s+$/, '');
     e.ta.remove();
+    e.grip.remove();
     const p = this.page;
     const { box } = e;
     if (box.id) {
       const old = p.texts.find((x) => x.id === box.id);
       if (!text) this.onCommit({ texts: p.texts.filter((x) => x.id !== box.id) });
-      else if (old && (old.text !== text || colorCss(old.color) !== colorCss(box.color) || old.size !== box.size)) {
-        this.onCommit({ texts: p.texts.map((x) => (x.id === box.id ? { ...x, text, color: box.color, size: box.size } : x)) });
+      else if (old && (old.text !== text || colorCss(old.color) !== colorCss(box.color) || old.size !== box.size || old.x !== box.x || old.y !== box.y)) {
+        this.onCommit({ texts: p.texts.map((x) => (x.id === box.id ? { ...x, text, color: box.color, size: box.size, x: box.x, y: box.y } : x)) });
       }
     } else if (text) {
       this.onCommit({ texts: [...p.texts, { ...box, id: uid(), text }] });
@@ -477,7 +530,7 @@ export class SketchCanvas {
     // Highlighters underneath, then everything else, each in original order.
     for (const pass of [true, false]) {
       for (const s of page.strokes) {
-        if ((s.pen.style === 'Highlighter') !== pass || this.hidden.has(s.id)) continue;
+        if ((s.pen.style === 'Highlighter') !== pass) continue;
         const e = this.entry(s);
         const moving = dragged(s.id);
         if (!moving && !intersects(e.b, view)) continue;
@@ -505,6 +558,7 @@ export class SketchCanvas {
   syncTexts() {
     const L = this.textLayer;
     L.style.transform = `translate(${this.ox}px, ${this.oy}px) scale(${this.zoom})`;
+    this.placeGrip(); // keeps its size on screen when zooming
     const texts = this.page.texts;
     if (texts !== this.textsRef) {
       this.textsRef = texts;
@@ -780,7 +834,9 @@ export class SketchCanvas {
       // A tap outside the text box being edited finishes it.
       this.endTextEdit();
     } else if (erasing) {
-      this.gesture = { kind: 'erase', id: e.pointerId, erased: [] };
+      // Erasing works on the page's ink and text as it goes; the result is
+      // one undoable change when the drag ends.
+      this.gesture = { kind: 'erase', id: e.pointerId, before: { strokes: this.page.strokes, texts: this.page.texts }, last: null };
       this.eraseAt(e);
     } else if (this.tool === 'select') {
       this.selectDown(e);
@@ -906,17 +962,18 @@ export class SketchCanvas {
     if (g.id !== e.pointerId) return;
     this.gesture = null;
     this.live.style.cursor = '';
-    if (cancelled) return this.cancelGesture();
+    if (cancelled) return this.cancelGesture(g);
     if (g.kind === 'draw') {
       this.addPoint(this.toPage(e), g);
       if (g.stroke.points.length) this.onCommit({ strokes: [...this.page.strokes, g.stroke] });
       this.requestRender();
     } else if (g.kind === 'erase') {
-      this.hidden.clear();
-      if (g.erased.length) {
-        const gone = new Set(g.erased);
-        this.onCommit({ strokes: this.page.strokes.filter((s) => !gone.has(s.id)) });
-      }
+      const { strokes, texts } = this.page;
+      Object.assign(this.page, g.before);
+      const change = {};
+      if (strokes !== g.before.strokes) change.strokes = strokes;
+      if (texts !== g.before.texts) change.texts = texts;
+      if (Object.keys(change).length) this.onCommit(change);
       this.requestRender();
     } else if (g.kind === 'move' || g.kind === 'resize') {
       const d = this.drag;
@@ -934,9 +991,9 @@ export class SketchCanvas {
     }
   }
 
-  cancelGesture() {
+  cancelGesture(g = this.gesture) {
+    if (g?.kind === 'erase') Object.assign(this.page, g.before);
     this.gesture = null;
-    this.hidden.clear();
     this.drag = null;
     this.marquee = null;
     this.requestRender();
@@ -958,22 +1015,71 @@ export class SketchCanvas {
     this.onCommit(change);
   }
 
+  /**
+   * Erases under the eraser at `e`: cuts away the ink it passes over and
+   * removes any text box it touches. Fast moves are filled in, so no ink is
+   * skipped between two samples.
+   */
   eraseAt(e) {
     const [x, y] = this.toPage(e);
     const r = this.eraserRadius;
     const g = this.gesture;
-    for (const s of this.page.strokes) {
-      if (this.hidden.has(s.id)) continue;
-      const b = this.entry(s).b;
-      if (x < b.minX - r || x > b.maxX + r || y < b.minY - r || y > b.maxY + r) continue;
-      if (hit(s, x, y, r)) {
-        this.hidden.add(s.id);
-        g.erased.push(s.id);
-        this.requestRender();
-      }
-    }
+    const from = g.last ?? [x, y];
+    const steps = Math.max(1, Math.ceil(Math.hypot(x - from[0], y - from[1]) / (r * 0.5)));
+    for (let i = 1; i <= steps; i++) this.eraseCircle(from[0] + ((x - from[0]) * i) / steps, from[1] + ((y - from[1]) * i) / steps, r);
+    g.last = [x, y];
     this.hover = this.local(e);
   }
+
+  /** True if a circle at (x, y) touches the text itself, not just the box around it. */
+  touchesText(box, x, y, r) {
+    const g = this.gesture;
+    g.textRects ??= new Map();
+    if (!g.textRects.has(box.id)) g.textRects.set(box.id, this.textLines(box));
+    return g.textRects.get(box.id).some((b) => {
+      const dx = x - Math.max(b.minX, Math.min(x, b.maxX)), dy = y - Math.max(b.minY, Math.min(y, b.maxY));
+      return dx * dx + dy * dy <= r * r;
+    });
+  }
+
+  /** The rectangles of a text box's laid-out lines, in page units (its box if it isn't shown). */
+  textLines(box) {
+    const el = this.textEls.get(box.id);
+    if (!el || el.hidden) return [this.boundsOf(box, 'text')];
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    const c = this.container.getBoundingClientRect();
+    const page = (sx, sy) => [(sx - c.left - this.ox) / this.zoom, (sy - c.top - this.oy) / this.zoom];
+    return [...range.getClientRects()]
+      .filter((q) => q.width > 0.5)
+      .map((q) => {
+        const [minX, minY] = page(q.left, q.top), [maxX, maxY] = page(q.right, q.bottom);
+        return { minX, minY, maxX, maxY };
+      });
+  }
+
+  eraseCircle(x, y, r) {
+    const p = this.page;
+    let cut = false;
+    const strokes = [];
+    for (const s of p.strokes) {
+      const b = this.entry(s).b;
+      const near = x >= b.minX - r && x <= b.maxX + r && y >= b.minY - r && y <= b.maxY + r;
+      const pieces = near ? cutStroke(s, x, y, r) : null;
+      if (!pieces) {
+        strokes.push(s);
+        continue;
+      }
+      cut = true;
+      for (const points of pieces) strokes.push({ id: uid(), pen: s.pen, points });
+    }
+    if (cut) p.strokes = strokes;
+    const texts = p.texts.filter((t) => !this.touchesText(t, x, y, r));
+    const removed = texts.length !== p.texts.length;
+    if (removed) p.texts = texts;
+    if (cut || removed) this.requestRender();
+  }
+
 
   startPinch() {
     const [a, b] = [...this.pointers.values()].filter((p) => p.type === 'touch');
@@ -1032,4 +1138,5 @@ const ICONS = {
   trash: '<svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>',
   duplicate: '<svg viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3"/></svg>',
   edit: '<svg viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16v4z"/></svg>',
+  move: '<svg viewBox="0 0 24 24"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/></svg>',
 };
