@@ -11,7 +11,7 @@
 // applies it (which is what makes undo uniform).
 
 import * as bg from './background.js';
-import { PAPER_COLOR, bounds, cutStroke, drawPaper, effectiveColor, hit, onSheet, sheetRects, SHEET_GAP, Smoother, strokePath, totalHeight } from './ink.js';
+import { PAPER_COLOR, bounds, cutStroke, drawPaper, effectiveAlpha, effectiveColor, hit, onSheet, sheetRects, SHEET_GAP, Smoother, strokePath, totalHeight } from './ink.js';
 import { t } from './i18n.js';
 
 const HANDLE = 16; // resize handle size, screen px
@@ -624,8 +624,62 @@ export class SketchCanvas {
 
   clearLive() {
     const c = this.lctx;
+    this.live.style.opacity = '';
     c.setTransform(1, 0, 0, 1, 0, 0);
     c.clearRect(0, 0, this.live.width, this.live.height);
+  }
+
+  /**
+   * The stroke in progress, drawn so a long stroke costs no more per sample
+   * than a short one: the part the smoother has settled is filled once into
+   * an offscreen buffer, and each frame only adds the tail on top of it. Both
+   * are opaque and the live layer takes the ink's opacity, so a translucent
+   * pen doesn't darken where the pieces overlap. Dashed and dotted strokes
+   * are redrawn whole, since their pattern runs from the start.
+   */
+  drawLiveStroke(g, dpr) {
+    const c = this.lctx;
+    const { pen, points } = g.stroke;
+    const toPage = (ctx) => {
+      ctx.setTransform(dpr * this.zoom, 0, 0, dpr * this.zoom, dpr * this.ox, dpr * this.oy);
+      ctx.clip(this.sheetClip());
+    };
+    const fill = (ctx, from, to) => {
+      const part = { pen, points: points.slice(from, to) };
+      ctx.fill(strokePath(part));
+      if (from > 0 && pen.style === 'Highlighter') {
+        // a highlighter has square ends; round the joint so no notch shows
+        const [x, y] = points[from];
+        ctx.beginPath();
+        ctx.arc(x, y, pen.width / 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    };
+    const color = `rgb(${pen.color.r},${pen.color.g},${pen.color.b})`;
+    this.live.style.opacity = effectiveAlpha(pen);
+    let from = 0;
+    if (pen.style !== 'Dashed' && pen.style !== 'Dotted') {
+      if (!g.buffer) {
+        g.buffer = new OffscreenCanvas(this.live.width, this.live.height);
+        g.bctx = g.buffer.getContext('2d');
+        toPage(g.bctx);
+        g.bctx.fillStyle = color;
+        g.frozen = 0;
+      }
+      const settled = g.smoother.settled;
+      if (settled - 1 > g.frozen) {
+        fill(g.bctx, g.frozen, settled);
+        g.frozen = settled - 1;
+      }
+      from = g.frozen;
+      c.setTransform(1, 0, 0, 1, 0, 0);
+      c.drawImage(g.buffer, 0, 0);
+    }
+    c.save();
+    toPage(c);
+    c.fillStyle = color;
+    fill(c, from, points.length);
+    c.restore();
   }
 
   /** Redraws the live layer: stroke in progress, eraser outline, or selection frame. */
@@ -634,15 +688,7 @@ export class SketchCanvas {
     const c = this.lctx;
     const g = this.gesture;
     this.clearLive();
-    if (g && g.kind === 'draw') {
-      c.setTransform(dpr * this.zoom, 0, 0, dpr * this.zoom, dpr * this.ox, dpr * this.oy);
-      c.save();
-      c.clip(this.sheetClip());
-      c.fillStyle = effectiveColor(g.stroke.pen);
-      c.fill(strokePath(g.stroke));
-      c.restore();
-      return;
-    }
+    if (g && g.kind === 'draw') return this.drawLiveStroke(g, dpr);
     c.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (this.tool === 'eraser' && this.hover) {
       c.strokeStyle = 'rgba(120,120,120,0.9)';
@@ -856,7 +902,8 @@ export class SketchCanvas {
       }
       e.preventDefault(); // keep focus in the new text box
     } else if ((e.button === 0 || e.pointerType !== 'mouse') && onSheet(this.page, ...this.toPage(e))) {
-      this.gesture = { kind: 'draw', id: e.pointerId, smoother: new Smoother(this.smoothing, 0.4 / this.zoom), stroke: { id: uid(), pen: structuredClone(this.pen), points: [] } };
+      const smoother = new Smoother(this.smoothing, 0.4 / this.zoom, (8 * this.smoothing) / this.zoom);
+      this.gesture = { kind: 'draw', id: e.pointerId, smoother, stroke: { id: uid(), pen: structuredClone(this.pen), points: smoother.points } };
       this.addPoint(this.toPage(e));
       this.drawTop();
     }
@@ -901,8 +948,7 @@ export class SketchCanvas {
   }
 
   addPoint(p, g = this.gesture) {
-    const q = g.smoother.push(p);
-    if (q) g.stroke.points.push(q);
+    g.smoother.push(p);
   }
 
   move(e) {

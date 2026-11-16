@@ -44,12 +44,17 @@ export function widthAt(pen, pressure) {
   return pen.width * (min + (1 - min) * p);
 }
 
-export function effectiveColor(pen) {
-  const c = pen.color;
-  let a = c.a;
+/** Opacity the pen's ink is drawn with, 0–1. */
+export function effectiveAlpha(pen) {
+  let a = pen.color.a;
   if (pen.style === 'Highlighter') a = Math.min(a, 90);
   else if (pen.style === 'Pencil') a = Math.min(a, 200);
-  return `rgba(${c.r},${c.g},${c.b},${a / 255})`;
+  return a / 255;
+}
+
+export function effectiveColor(pen) {
+  const c = pen.color;
+  return `rgba(${c.r},${c.g},${c.b},${effectiveAlpha(pen)})`;
 }
 
 /** Splits a stroke into pieces {pts: [[x,y]], radii: []} by pen style. */
@@ -234,19 +239,56 @@ export function cutStroke(stroke, cx, cy, radius) {
   return pieces.filter((ps) => ps.length > 1 && length(ps) > 0.5);
 }
 
-/** Low-latency exponential smoothing with a minimum-distance filter. */
+/**
+ * Input smoothing for a stroke being drawn. Samples go through low-latency
+ * exponential smoothing and a minimum-distance filter, then `points` holds
+ * them evened out: each point is the Gaussian-weighted average of its
+ * neighbours by arc length (sigma `sigma`), which irons out the digitizer
+ * jitter a pen shows on a slow straight line. The window narrows towards the
+ * ends so they stay put, and only the tail the newest sample reaches is redone:
+ * `points` before index `settled` no longer change.
+ */
 export class Smoother {
-  constructor(strength, minDistance) {
+  constructor(strength, minDistance, sigma) {
     this.a = 1 - Math.min(0.95, Math.max(0, strength));
     this.min = minDistance;
-    this.last = null;
+    this.sigma = sigma;
+    this.raw = [];
+    this.s = []; // arc length up to each raw point
+    this.points = [];
+    this.settled = 0;
   }
   push([x, y, p]) {
-    if (!this.last) return (this.last = [x, y, p]);
-    const l = this.last;
-    const q = [l[0] + (x - l[0]) * this.a, l[1] + (y - l[1]) * this.a, l[2] + (p - l[2]) * this.a];
-    if (Math.hypot(q[0] - l[0], q[1] - l[1]) < this.min) return null;
-    return (this.last = q);
+    const raw = this.raw, n = raw.length;
+    let q = [x, y, p];
+    if (n) {
+      const l = raw[n - 1];
+      q = [l[0] + (x - l[0]) * this.a, l[1] + (y - l[1]) * this.a, l[2] + (p - l[2]) * this.a];
+      if (Math.hypot(q[0] - l[0], q[1] - l[1]) < this.min) return;
+    }
+    this.s.push(n ? this.s[n - 1] + Math.hypot(q[0] - raw[n - 1][0], q[1] - raw[n - 1][1]) : 0);
+    raw.push(q);
+    const reach = 3 * this.sigma, end = this.s[n];
+    let i = n;
+    while (i > 0 && end - this.s[i - 1] < reach) i--;
+    this.points.length = this.settled = i;
+    for (let k = i; k <= n; k++) this.points.push(this.fair(k));
+  }
+  fair(k) {
+    const { raw, s } = this;
+    const w = Math.min(3 * this.sigma, s[k], s[s.length - 1] - s[k]);
+    if (w <= 0) return raw[k];
+    const d = 2 * (w / 3) ** 2;
+    let x = 0, y = 0, p = 0, sum = 0;
+    for (let j = k; j >= 0 && s[k] - s[j] <= w; j--) {
+      const f = Math.exp(-((s[k] - s[j]) ** 2) / d);
+      x += raw[j][0] * f; y += raw[j][1] * f; p += raw[j][2] * f; sum += f;
+    }
+    for (let j = k + 1; j < raw.length && s[j] - s[k] <= w; j++) {
+      const f = Math.exp(-((s[j] - s[k]) ** 2) / d);
+      x += raw[j][0] * f; y += raw[j][1] * f; p += raw[j][2] * f; sum += f;
+    }
+    return [x / sum, y / sum, p / sum];
   }
 }
 
