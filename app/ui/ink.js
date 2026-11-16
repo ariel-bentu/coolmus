@@ -37,6 +37,13 @@ export const totalHeight = (page) => {
 /** True if (x, y) is on one of the sheets. */
 export const onSheet = (page, x, y) => sheetRects(page).some((r) => x >= r.x && x <= r.x + r.w && y >= r.y && y <= r.y + r.h);
 
+/**
+ * How many times wider than its shown size a pen draws: the width control
+ * shows a marker's width divided by this, so switching between pen and
+ * marker keeps the number while the marker draws much wider.
+ */
+export const widthScale = (style) => (style === 'Highlighter' ? 8 : 1);
+
 export function widthAt(pen, pressure) {
   if (!pen.pressure_sensitive || pen.style === 'Highlighter') return pen.width;
   const p = Math.min(1, Math.max(0, pressure));

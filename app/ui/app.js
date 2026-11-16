@@ -4,21 +4,20 @@
 
 import { setLanguage, t, translateDom, getLanguage } from './i18n.js';
 import { SketchCanvas, colorCss } from './canvas.js';
-import { bounds, sheetCount, sheetTop, SHEET_GAP } from './ink.js';
+import { bounds, sheetCount, sheetTop, SHEET_GAP, widthScale } from './ink.js';
 import { $, el, bdi, error, modal, prompt, confirmDialog, showMenu, showPanel, hideMenu } from './ui.js';
 import { renderTree, allFolders, findNode, parentOf, baseName, isInside, isFlat, bindTreeSpace } from './tree.js';
 import { pagePng, printSheets } from './export.js';
 import * as bg from './background.js';
 import { fromBlob, pickFile, takePhoto } from './media.js';
 import { editLabel, labelText } from './labels.js';
+import { bindPalmRejection } from './palm.js';
 
 const { invoke } = window.__TAURI__.core;
 
 const PALETTE = ['#1a1a1a', '#5f6368', '#d93025', '#f28b00', '#f9d400', '#1e8e3e', '#009688', '#1a73e8', '#7b1fa2', '#e91e63'];
 const STYLES = ['Solid', 'Dashed', 'Dotted', 'Highlighter', 'Pencil'];
 /** A marker is this many times wider than the pen it was switched from. */
-const MARKER_WIDTH = 5;
-const MIN_WIDTH = 0.5, MAX_WIDTH = 40; // the width slider's range
 
 const hslHex = (h, s, l) => {
   const f = (n) => {
@@ -72,6 +71,7 @@ const state = {
   settings: null,
   current: null, // { path, page, undo: [], redo: [], dirty, lastChange }
   folder: '', // selected folder: where new pages go
+  reveal: null, // path to scroll to and flash on the next tree render
   treeSel: null, // last tree item clicked: target of Ctrl+C / Ctrl+X / Ctrl+V
   focus: 'page', // 'tree' or 'page': where the keyboard's copy/paste applies
   cut: [], // paths cut in Coolmus, moved by the next paste
@@ -99,6 +99,8 @@ const hexToColor = (hex) => ({ r: parseInt(hex.slice(1, 3), 16), g: parseInt(hex
 const colorToHex = (c) => '#' + [c.r, c.g, c.b].map((v) => v.toString(16).padStart(2, '0')).join('');
 const widthFromSlider = (v) => Math.round(0.5 * Math.pow(80, v / 100) * 10) / 10;
 const sliderFromWidth = (w) => Math.round((100 * Math.log(w / 0.5)) / Math.log(80));
+/** A pen's width as the toolbar shows it: a marker's is scaled down (widthScale). */
+const shownWidth = (pen) => Math.round((pen.width / widthScale(pen.style)) * 10) / 10;
 const typing = () => /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || $('dialog').open;
 
 async function call(cmd, args, options) {
@@ -199,6 +201,7 @@ function saveOpenFolders() {
 
 const canvas = new SketchCanvas($('stage'), {
   onCommit: (change) => commit(change),
+  onAddSheet: () => addSheet(),
   onZoom: (z) => ($('zoomFit').textContent = Math.round(z * 100) + '%'),
   onSheetChange: (i) => {
     state.sheet = i;
@@ -233,7 +236,7 @@ function addSheet() {
   if (!c) return;
   const n = sheetCount(c.page);
   commit({ sheets: n + 1 });
-  canvas.showSheet(n);
+  canvas.revealSheet(n);
 }
 
 function removeLastSheet() {
@@ -509,6 +512,7 @@ async function newPage(folder = state.folder) {
   state.search = '';
   $('search').value = '';
   await refreshTree();
+  state.reveal = path;
   await openPage(path);
   $('title').focus();
   $('title').select();
@@ -520,6 +524,7 @@ async function newFolder(parent = state.folder) {
   const path = await call('create_folder', { parent, name });
   state.openFolders.add(parent);
   state.folder = path;
+  state.reveal = path;
   saveOpenFolders();
   await refreshTree();
 }
@@ -756,7 +761,14 @@ async function importOneNote(folder) {
 
 async function addRoot() {
   await saveNow();
-  const tr = await call('add_root');
+  const unlisten = await window.__TAURI__.event.listen('scan-progress', ({ payload: [done, total] }) =>
+    showProgress({ text: t('readingPages', done, total), done, total }),
+  );
+  const tr = await call('add_root').finally(() => {
+    unlisten();
+    showProgress(null);
+    setStatus('');
+  });
   if (!tr) return null;
   for (const r of tr.tree) if (!state.tree.some((o) => o.path === r.path)) state.openFolders.add(r.path);
   saveOpenFolders();
@@ -851,9 +863,9 @@ function renderToolbar() {
   $('swatches').querySelectorAll('.swatch').forEach((s) => s.classList.toggle('on', s.dataset.color === hex));
   // The color button shows a custom color; for the toolbar's own it shows a rainbow.
   $('colorChip').style.background = PALETTE.includes(hex) ? '' : hex;
-  $('width').value = sliderFromWidth(shown.width);
-  $('widthOut').textContent = shown.width;
-  $('stylePreview').innerHTML = styleSvg(shown.style, shown.width, colorCss(shown.color));
+  $('width').value = sliderFromWidth(shownWidth(shown));
+  $('widthOut').textContent = shownWidth(shown);
+  $('stylePreview').innerHTML = styleSvg(shown.style, shownWidth(shown), colorCss(shown.color));
   $('styleBtn').title = `${t('style')}: ${t('style_' + shown.style)}`;
   state.shownPen = shown;
   $('pressure').classList.toggle('on', pen.pressure_sensitive);
@@ -1000,11 +1012,15 @@ function openSettings() {
 // ---------- wiring ----------
 
 /** Pen controls change the selection when there is one, else the pen. */
+/** `props.width` is the width as the toolbar shows it (see shownWidth). */
 function penChange(props, { switchToPen = true } = {}) {
   if (state.tool === 'select' && canvas.restyleSelection(props)) return renderToolbar();
   // Typing in a text box: the color goes to it (and stays the pen's for the next one).
   if (canvas.restyleEditing(props)) switchToPen = false;
-  Object.assign(state.settings.pen, props);
+  const { width, ...rest } = props;
+  const pen = state.settings.pen;
+  Object.assign(pen, rest);
+  if (width) pen.width = width * widthScale(pen.style);
   if (switchToPen && state.tool !== 'text') setTool('pen');
   renderToolbar();
   saveSettings();
@@ -1066,15 +1082,10 @@ function bind() {
     const r = $('styleBtn').getBoundingClientRect();
     const rtl = document.documentElement.dir === 'rtl';
     showMenu(rtl ? r.right - 180 : r.left, r.bottom + 4, STYLES.map((s) => ({
-      html: styleSvg(s, shown.width, colorCss(shown.color)) + `<span>${t('style_' + s)}</span>`,
+      html: styleSvg(s, shownWidth(shown), colorCss(shown.color)) + `<span>${t('style_' + s)}</span>`,
       on: s === shown.style,
-      action: () => {
-        // A marker is much wider than a pen: scale the width on the way in and out.
-        const marker = (style) => style === 'Highlighter';
-        const factor = marker(s) === marker(shown.style) ? 1 : marker(s) ? MARKER_WIDTH : 1 / MARKER_WIDTH;
-        const width = Math.round(Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, shown.width * factor)) * 10) / 10;
-        penChange({ style: s, width });
-      },
+      // The shown width stays; a marker draws it wider.
+      action: () => penChange({ style: s, width: shownWidth(shown) }),
     })));
   });
   $('color').addEventListener('click', (e) => {
@@ -1084,7 +1095,7 @@ function bind() {
   $('width').addEventListener('input', (e) => {
     $('widthOut').textContent = widthFromSlider(Number(e.target.value));
     if (state.tool !== 'select') {
-      state.settings.pen.width = widthFromSlider(Number(e.target.value));
+      state.settings.pen.width = widthFromSlider(Number(e.target.value)) * widthScale(state.settings.pen.style);
       canvas.pen = state.settings.pen;
     }
   });
@@ -1162,7 +1173,11 @@ function bind() {
           ]),
       {
         icon: ICONS.clearPage, text: t('clearPage'), danger: true,
-        action: () => (c.page.strokes.length || c.page.texts.length || c.page.images.length) && commit({ strokes: [], texts: [], images: [] }),
+        action: async () => {
+          if (!(c.page.strokes.length || c.page.texts.length || c.page.images.length)) return;
+          if (!(await confirmDialog(t('confirmClearPage', baseName(c.path)), t('clearPageSub'), t('clearPage')))) return;
+          commit({ strokes: [], texts: [], images: [] });
+        },
       },
       '-',
       { icon: ICONS.print, text: t('print'), action: () => printPages([c.path], baseName(c.path)) },
@@ -1218,6 +1233,7 @@ function bind() {
   // Copy and paste act on the tree after clicking in it, else on the page.
   $('sidebar').addEventListener('pointerdown', () => (state.focus = 'tree'));
   bindTreeSpace(treeCtx);
+  bindPalmRejection();
   document.querySelectorAll('[data-dir="auto"]').forEach((f) => {
     f.addEventListener('input', () => autoDirection(f));
     f.addEventListener('change', () => autoDirection(f));
@@ -1324,15 +1340,35 @@ function applyLanguage() {
   canvas.selectionChanged();
 }
 
+/** The time in the toolbar (handy in a meeting), updated on the minute. */
+function tickClock() {
+  const now = new Date();
+  $('clock').textContent = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  setTimeout(tickClock, 60000 - (now.getSeconds() * 1000 + now.getMilliseconds()) + 50);
+}
+
 async function start() {
-  const snap = await invoke('get_state');
-  state.settings = snap.settings;
-  setTree(snap);
-  if (firstRun) state.tree.forEach((r) => state.openFolders.add(r.path));
-  bind();
-  applyLanguage();
-  renderTagSuggestions();
-  await openSomething();
+  const loader = $('loader');
+  const unlisten = await window.__TAURI__.event.listen('scan-progress', ({ payload: [done, total] }) => {
+    loader.classList.add('counting');
+    loader.style.setProperty('--done', `${(100 * done) / total}%`);
+    $('loaderCount').textContent = `${done} / ${total}`;
+  });
+  try {
+    const snap = await invoke('get_state');
+    state.settings = snap.settings;
+    setTree(snap);
+    if (firstRun) state.tree.forEach((r) => state.openFolders.add(r.path));
+    bind();
+    tickClock();
+    applyLanguage();
+    renderTagSuggestions();
+    await openSomething();
+  } finally {
+    unlisten();
+    loader.classList.add('done');
+    setTimeout(() => loader.remove(), 400);
+  }
 }
 
 start().catch((e) => error(e));

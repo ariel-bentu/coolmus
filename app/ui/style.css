@@ -66,6 +66,7 @@ input:focus, select:focus, button:focus-visible { outline: 2px solid var(--accen
 .group { display: inline-flex; align-items: center; gap: 4px; }
 .sep { width: 1px; align-self: stretch; background: var(--border); margin-inline: 2px; }
 .spacer { flex: 1; }
+#clock { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted); padding-inline: 8px; }
 #width { width: 110px; }
 #widthOut { min-width: 2.5em; text-align: center; font-variant-numeric: tabular-nums; }
 #eraserSize { width: 90px; }
@@ -136,6 +137,16 @@ details .children { padding-inline-start: 16px; }
 /* Folder tree */
 .treeActions { display: flex; gap: 6px; }
 .treeActions button { flex: 1; justify-content: center; font-size: 13px; }
+/* "Create in" and its buttons, set into the panel apart from the search below */
+.newBox {
+  display: flex; flex-direction: column; gap: 4px; padding: 6px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+#newTarget { font-size: 12px; padding: 2px 4px; border-radius: 4px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#newTarget:hover { background: var(--hover); }
+/* While the pen is near, a resting palm doesn't scroll the explorer (palm.js). */
+body.penNear * { touch-action: none; }
 #tree .row {
   display: flex; align-items: center; gap: 6px; padding-block: 5px; padding-inline-end: 8px;
   border-radius: 6px; cursor: pointer; min-height: 32px; white-space: nowrap;
@@ -147,6 +158,8 @@ details .children { padding-inline-start: 16px; }
 #tree .row.root { font-weight: 600; }
 #tree .row.missing { opacity: 0.55; }
 #tree .row.sel { background: var(--hover); }
+#tree .row.fresh { animation: fresh 1.6s ease-out; }
+@keyframes fresh { from { background: color-mix(in srgb, var(--accent) 35%, transparent); } }
 #tree .pdf .ico svg { color: #c5221f; }
 .rootRow { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
 /* The path, the option and the links each get a line. */
@@ -217,6 +230,11 @@ dialog select { min-width: 5em; }
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.2);
 }
 .selbar button { min-height: 36px; min-width: 36px; }
+.addSheetBtn {
+  position: absolute; z-index: 4; transform: translateX(-50%);
+  border-style: dashed; border-radius: 999px; padding-inline: 16px; color: var(--muted); background: var(--panel);
+}
+.addSheetBtn:hover { color: var(--text); border-style: solid; }
 .cameraView { width: 100%; max-height: 60vh; background: #000; border-radius: 8px; }
 .pathRow { margin: 6px 0; padding: 6px 8px; background: var(--bg); border-radius: 6px; font-size: 12px; overflow-wrap: anywhere; user-select: text; -webkit-user-select: text; }
 dialog .row { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -229,6 +247,7 @@ dialog .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .menu {
   position: fixed; z-index: 50; background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2); padding: 4px; min-width: 180px;
+  max-height: calc(100vh - 8px); overflow-y: auto; /* a long menu in a short window scrolls */
 }
 .menu button { display: flex; width: 100%; border: none; background: none; text-align: start; border-radius: 6px; }
 .menu .menuHead { display: flex; justify-content: flex-end; margin: -2px -2px 0; }
@@ -260,6 +279,20 @@ dialog input[type=text] { width: 100%; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinner.small { width: 12px; height: 12px; }
+/* Start-up screen (index.html #loader) */
+#loader {
+  position: fixed; inset: 0; z-index: 100; background: var(--bg);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+  transition: opacity 0.3s;
+}
+#loader.done { opacity: 0; pointer-events: none; }
+#loader img { width: 96px; height: 96px; border-radius: 22px; animation: loaderIn 0.5s ease-out; }
+.loaderBar { width: 220px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+#loaderFill { height: 100%; width: 30%; border-radius: 3px; background: var(--accent); animation: loaderSlide 1.2s ease-in-out infinite; }
+#loader.counting #loaderFill { animation: none; width: var(--done); transition: width 0.15s; }
+#loaderCount { min-height: 1.2em; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+@keyframes loaderIn { from { opacity: 0; transform: scale(0.9); } }
+@keyframes loaderSlide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
 #progress { width: 140px; height: 8px; accent-color: var(--accent); }
 bdi { unicode-bidi: isolate; }
 /* Directional icons point the other way in right-to-left layouts. */
@@ -280,7 +313,7 @@ body.full #sidebar, body.full #pagebar, body.full #status { display: none !impor
 /* …and the toolbar keeps only drawing controls, on a single row. */
 body.full #toolbar { flex-wrap: nowrap; overflow-x: auto; }
 body.full #toolbar > * { flex-shrink: 0; }
-body.full :is(#sidebarBtn, #fullBtn, #pageMenu, #oneNoteBtn, #settingsBtn, #langBtn, #toolbar .spacer) { display: none; }
+body.full :is(#sidebarBtn, #sidebarSep, #fullBtn, #pageMenu, #oneNoteBtn, #settingsBtn, #langBtn, #toolbar .spacer) { display: none; }
 
 /* Exit control for full-page mode, sized for touch/pen (no keyboard needed). */
 #exitFull { display: none; }

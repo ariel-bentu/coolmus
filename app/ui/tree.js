@@ -64,6 +64,7 @@ export function findNode(nodes, path) {
 export async function renderTree(ctx) {
   const { state } = ctx;
   renderTagCloud(ctx);
+  renderTarget(ctx);
   const tree = $('tree');
   const cur = state.current?.path;
 
@@ -95,6 +96,13 @@ export async function renderTree(ctx) {
   };
   walk(state.tree, 0);
   tree.replaceChildren(...rows);
+  // A page or folder just made is scrolled to and flashed, so it's clear where it went.
+  if (state.reveal) {
+    const row = rows.find((r) => r.dataset.path === state.reveal);
+    state.reveal = null;
+    row?.scrollIntoView({ block: 'nearest' });
+    row?.classList.add('fresh');
+  }
 }
 
 function indent(depth) {
@@ -205,6 +213,7 @@ function fileRow(ctx, node, depth) {
     style: indent(depth),
     draggable: true,
     title: node.tags?.length ? node.tags.map((x) => '#' + x).join(' ') : node.name,
+    'data-path': node.path,
   }, el('span', { class: 'ico', html: isPage ? PAGE : PDF }), bdi(node.name));
   row.addEventListener('click', () => {
     ctx.select(node);
@@ -298,6 +307,22 @@ export function bindTreeSpace(ctx) {
     const root = flatRoot(e);
     if (root && accepts(e)) drop(ctx, e, root.path);
   });
+}
+
+/** The line under New page / New folder naming the folder they create in. */
+function renderTarget(ctx) {
+  const { state } = ctx;
+  const line = $('newTarget');
+  const folder = state.folder;
+  line.hidden = !folder;
+  if (!folder) return;
+  line.replaceChildren(el('span', { class: 'muted', text: t('newIn') }), ' ', ...ctx.folderPath(folder));
+  line.onclick = () => {
+    for (let p = parentOf(folder); state.tree.some((r) => isInside(p, r.path)); p = parentOf(p)) state.openFolders.add(p);
+    ctx.saveOpenFolders();
+    state.reveal = folder;
+    renderTree(ctx);
+  };
 }
 
 function renderTagCloud(ctx) {

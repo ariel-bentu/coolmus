@@ -11,10 +11,12 @@
 // applies it (which is what makes undo uniform).
 
 import * as bg from './background.js';
-import { PAPER_COLOR, bounds, cutStroke, drawPaper, effectiveAlpha, effectiveColor, hit, onSheet, sheetRects, SHEET_GAP, Smoother, strokePath, totalHeight } from './ink.js';
+import { PAPER_COLOR, bounds, cutStroke, drawPaper, effectiveAlpha, effectiveColor, hit, onSheet, sheetRects, SHEET_GAP, Smoother, strokePath, totalHeight, widthScale } from './ink.js';
 import { t } from './i18n.js';
+import { isPalm, onPenNear } from './palm.js';
 
 const HANDLE = 16; // resize handle size, screen px
+const ADD_SHEET_ROOM = 64; // below the last sheet, for its add button, screen px
 const PICK = 6; // pick tolerance, screen px
 const DOUBLE_TAP_MS = 450;
 
@@ -24,12 +26,13 @@ const inside = (r, x, y, pad = 0) => x >= r.minX - pad && x <= r.maxX + pad && y
 const union = (a, b) => (a ? { minX: Math.min(a.minX, b.minX), minY: Math.min(a.minY, b.minY), maxX: Math.max(a.maxX, b.maxX), maxY: Math.max(a.maxY, b.maxY) } : b);
 
 export class SketchCanvas {
-  constructor(container, { onCommit, onZoom, onSelection, onSheetChange }) {
+  constructor(container, { onCommit, onZoom, onSelection, onSheetChange, onAddSheet }) {
     this.container = container;
     this.onCommit = onCommit;
     this.onZoom = onZoom || (() => {});
     this.onSheetChange = onSheetChange || (() => {});
     this.onSelection = onSelection || (() => {});
+    this.onAddSheet = onAddSheet;
     this.base = document.createElement('canvas');
     this.live = document.createElement('canvas');
     this.base.className = 'layer';
@@ -39,7 +42,12 @@ export class SketchCanvas {
     this.selbar = document.createElement('div');
     this.selbar.className = 'selbar';
     this.selbar.hidden = true;
-    container.append(this.base, this.live, this.textLayer, this.selbar);
+    // Below the last sheet: adds one (pages drawn on a PDF have that PDF's sheets).
+    this.addBtn = document.createElement('button');
+    this.addBtn.className = 'addSheetBtn';
+    this.addBtn.hidden = true;
+    this.addBtn.addEventListener('click', () => this.onAddSheet?.());
+    container.append(this.base, this.live, this.textLayer, this.selbar, this.addBtn);
     this.bctx = this.base.getContext('2d', { alpha: false });
     this.lctx = this.live.getContext('2d', { desynchronized: true }) || this.live.getContext('2d');
 
@@ -64,7 +72,6 @@ export class SketchCanvas {
     this.editing = null; // text box being edited
     this.gesture = null;
     this.pointers = new Map();
-    this.penDown = false;
     this.spaceDown = false;
     this.hover = null;
     this.lastTap = null;
@@ -74,6 +81,7 @@ export class SketchCanvas {
 
     new ResizeObserver(() => this.resize()).observe(container);
     this.bindInput();
+    onPenNear(() => this.rejectTouch());
   }
 
   // ---------- public API ----------
@@ -147,10 +155,11 @@ export class SketchCanvas {
   clampView() {
     const w = this.container.clientWidth, h = this.container.clientHeight;
     const m = this.fullPage ? 0 : 24;
+    const below = m + (this.canAddSheet() ? ADD_SHEET_ROOM : 0); // room for the add button
     const W = this.page.width * this.zoom, H = totalHeight(this.page) * this.zoom;
     const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
     this.ox = W + 2 * m <= w ? (w - W) / 2 : clamp(this.ox, w - W - m, m);
-    this.oy = H + 2 * m <= h ? m : clamp(this.oy, h - H - m, m);
+    this.oy = H + m + below <= h ? m : clamp(this.oy, h - H - below, m);
   }
 
   /** The PDF a page is drawn on, sheet by sheet, sharp at the current zoom. */
@@ -172,6 +181,41 @@ export class SketchCanvas {
     if (key === this.sheetKey) return;
     this.sheetKey = key;
     this.onSheetChange(i, sheets.length);
+  }
+
+  canAddSheet() {
+    return !!(this.onAddSheet && this.page && !this.page.background);
+  }
+
+  /**
+   * Glides down to a sheet just added, stopping with the gap above it near
+   * the top of the view, so the end of the sheet before stays in sight.
+   */
+  revealSheet(i) {
+    const r = sheetRects(this.page)[i];
+    const from = this.oy, to = this.container.clientHeight * 0.15 - (r.y - SHEET_GAP / 2) * this.zoom;
+    const start = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - start) / 350);
+      this.oy = from + (to - from) * (1 - (1 - k) ** 3);
+      this.requestRender();
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  placeAddButton() {
+    const b = this.addBtn;
+    b.hidden = !this.canAddSheet();
+    if (b.hidden) return;
+    const label = t('addSheet');
+    if (b.dataset.label !== label) {
+      b.dataset.label = label;
+      b.innerHTML = `<svg viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M12 10v7M8.5 13.5h7"/></svg><span>${label}</span>`;
+    }
+    const last = sheetRects(this.page).at(-1);
+    b.style.left = this.ox + (last.x + last.w / 2) * this.zoom + 'px';
+    b.style.top = this.oy + (last.y + last.h) * this.zoom + 16 + 'px';
   }
 
   /** Scrolls so sheet `i` starts at the top of the view. */
@@ -276,13 +320,16 @@ export class SketchCanvas {
   }
 
   /** Applies pen properties (color, width, style) and/or a text size to the selection. */
+  /** `width` is the size shown in the toolbar (see widthScale). */
   restyleSelection({ color, width, style, size }) {
     const { strokes, texts } = this.selected();
     if (!strokes.length && !texts.length) return false;
     const change = {};
     if (strokes.length && (color || width || style)) {
       change.strokes = this.page.strokes.map((s) =>
-        this.selection.has(s.id) ? { ...s, pen: { ...s.pen, ...(color && { color }), ...(width && { width }), ...(style && { style }) } } : s,
+        this.selection.has(s.id)
+          ? { ...s, pen: { ...s.pen, ...(color && { color }), ...(width && { width: width * widthScale(style || s.pen.style) }), ...(style && { style }) } }
+          : s,
       );
     }
     if (texts.length && (color || size)) {
@@ -489,6 +536,7 @@ export class SketchCanvas {
     if (!page) {
       this.textLayer.replaceChildren();
       this.textEls.clear();
+      this.addBtn.hidden = true;
       return;
     }
 
@@ -546,6 +594,7 @@ export class SketchCanvas {
     ctx.restore();
 
     this.syncTexts();
+    this.placeAddButton();
     this.drawTop();
   }
 
@@ -848,9 +897,7 @@ export class SketchCanvas {
 
   down(e) {
     if (!this.page) return;
-    if (e.pointerType === 'pen') this.penDown = true;
-    // Palm rejection: ignore touches while the pen is on the screen.
-    if (e.pointerType === 'touch' && this.penDown) return;
+    if (isPalm(e)) return;
     try {
       this.live.setPointerCapture(e.pointerId);
     } catch {
@@ -874,7 +921,7 @@ export class SketchCanvas {
     const panning = e.button === 1 || this.spaceDown || this.tool === 'pan' || (e.pointerType === 'touch' && !this.touchDraws);
     const erasing = this.tool === 'eraser' || (e.pointerType === 'pen' && (e.buttons & 32) !== 0);
     if (panning) {
-      this.gesture = { kind: 'pan', id: e.pointerId, last: this.local(e) };
+      this.gesture = { kind: 'pan', id: e.pointerId, last: this.local(e), touchView: e.pointerType === 'touch' ? this.viewNow() : null };
       this.live.style.cursor = 'grabbing';
     } else if (this.editing) {
       // A tap outside the text box being edited finishes it.
@@ -952,6 +999,7 @@ export class SketchCanvas {
   }
 
   move(e) {
+    if (isPalm(e)) return;
     if (this.pointers.has(e.pointerId)) this.pointers.set(e.pointerId, { ...this.local(e), type: e.pointerType });
     const g = this.gesture;
     if (!g) {
@@ -998,7 +1046,6 @@ export class SketchCanvas {
 
   up(e, cancelled) {
     this.pointers.delete(e.pointerId);
-    if (e.pointerType === 'pen') this.penDown = false;
     const g = this.gesture;
     if (!g) return;
     if (g.kind === 'pinch') {
@@ -1129,8 +1176,29 @@ export class SketchCanvas {
 
   startPinch() {
     const [a, b] = [...this.pointers.values()].filter((p) => p.type === 'touch');
-    this.gesture = { kind: 'pinch', dist: Math.hypot(a.x - b.x, a.y - b.y), mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
+    const touchView = this.gesture?.touchView ?? this.viewNow();
+    this.gesture = { kind: 'pinch', touchView, dist: Math.hypot(a.x - b.x, a.y - b.y), mid: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 } };
     this.drawTop();
+  }
+
+  viewNow() {
+    return { zoom: this.zoom, ox: this.ox, oy: this.oy };
+  }
+
+  /**
+   * The pen came near while touch was panning or pinching: that touch was
+   * the palm landing first, so the view goes back to where it was and the
+   * touch is dropped.
+   */
+  rejectTouch() {
+    const v = this.gesture?.touchView;
+    if (!v) return;
+    for (const [id, p] of this.pointers) if (p.type === 'touch') this.pointers.delete(id);
+    this.gesture = null;
+    this.live.style.cursor = '';
+    Object.assign(this, v);
+    this.onZoom(this.zoom);
+    this.requestRender();
   }
 
   updatePinch() {

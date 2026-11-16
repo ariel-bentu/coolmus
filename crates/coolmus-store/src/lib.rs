@@ -8,13 +8,14 @@
 //!                               editable page data (see `coolmus-pdf`)
 //!   Manual.pdf                  any other PDF is listed too
 //! ```
-//! The folder tree *is* the organization: there is no index file, so Explorer,
-//! OneDrive or any sync tool can change the folders safely. The page name is
+//! The folder tree *is* the organization: there is no index file in the
+//! folders, so Explorer, OneDrive or any sync tool can change them safely (the
+//! app may keep a private cache of the index elsewhere, see [`Store::with_cache`]). The page name is
 //! the file name. Paths exchanged with callers are absolute, use `/`
 //! separators, and must lie inside one of the roots. Writes are atomic
 //! (temp file + rename) so a crash never corrupts a page.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -169,7 +170,7 @@ pub struct Loaded {
 }
 
 /// What the store remembers about a PDF without keeping it loaded.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Entry {
     stamp: (u64, u64),
     is_page: bool,
@@ -183,9 +184,22 @@ struct Header {
     tags: Vec<String>,
 }
 
+/// Called as PDFs are read while indexing, with (read so far, to read).
+pub type Progress<'a> = &'a mut dyn FnMut(usize, usize);
+
+/// Counts the PDFs read during a scan for its [`Progress`].
+struct Reading<'a> {
+    done: usize,
+    total: usize,
+    report: Progress<'a>,
+}
+
 pub struct Store {
     roots: Vec<PathBuf>,
     index: HashMap<String, Entry>,
+    /// Where the index is kept between runs, and whether it changed since.
+    cache: Option<PathBuf>,
+    dirty: bool,
     /// Font for text in written PDFs (see [`coolmus_pdf::system_font`]).
     font: Vec<u8>,
 }
@@ -292,16 +306,37 @@ fn stamp_of(meta: &fs::Metadata) -> (u64, u64) {
 
 impl Store {
     pub fn new(roots: Vec<PathBuf>, font: Vec<u8>) -> Self {
-        Self { roots, index: HashMap::new(), font }
+        Self { roots, index: HashMap::new(), cache: None, dirty: false, font }
+    }
+
+    /// Keeps the index in `path` between runs, so a start only rereads the
+    /// PDFs that changed since: reading them all takes seconds with many
+    /// pages, more on OneDrive, where it may download them.
+    pub fn with_cache(mut self, path: PathBuf) -> Self {
+        if let Some(index) = fs::read(&path).ok().and_then(|b| serde_json::from_slice(&b).ok()) {
+            self.index = index;
+        }
+        self.cache = Some(path);
+        self
+    }
+
+    fn save_cache(&mut self) {
+        if !std::mem::take(&mut self.dirty) {
+            return;
+        }
+        // Only a cache: if it can't be written, the next start just reads more.
+        if let (Some(path), Ok(json)) = (&self.cache, serde_json::to_vec(&self.index)) {
+            let _ = write_atomic(path, &json);
+        }
     }
 
     pub fn roots(&self) -> &[PathBuf] {
         &self.roots
     }
 
+    /// Entries of folders no longer listed go at the next [`Store::tree`].
     pub fn set_roots(&mut self, roots: Vec<PathBuf>) {
         self.roots = roots;
-        self.index.clear();
     }
 
     /// Resolves a caller-supplied path, refusing anything outside the roots
@@ -344,7 +379,14 @@ impl Store {
 
     /// Scans all roots, refreshing the index for PDFs that changed.
     pub fn tree(&mut self) -> Vec<Node> {
-        let mut seen = Vec::new();
+        self.tree_with_progress(&mut |_, _| {})
+    }
+
+    /// [`Store::tree`], reporting progress while it reads PDFs it hasn't indexed.
+    pub fn tree_with_progress(&mut self, report: Progress) -> Vec<Node> {
+        let total = self.roots.iter().map(|r| self.unindexed(r)).sum();
+        let mut reading = Reading { done: 0, total, report };
+        let mut seen = HashSet::new();
         let nodes = self
             .roots
             .clone()
@@ -354,15 +396,34 @@ impl Store {
                 let modified = fs::metadata(root).and_then(|m| m.modified()).map(millis).unwrap_or(0);
                 let missing = !root.is_dir();
                 let label = read_folder_info(root).label;
-                let children = self.scan(root, &mut seen);
+                let children = self.scan(root, &mut seen, &mut reading);
                 Node { kind: NodeKind::Root, name, path: api_path(root), tags: Vec::new(), modified, label, missing, children }
             })
             .collect();
+        let before = self.index.len();
         self.index.retain(|k, _| seen.contains(k));
+        self.dirty |= self.index.len() != before;
+        self.save_cache();
         nodes
     }
 
-    fn scan(&mut self, dir: &Path, seen: &mut Vec<String>) -> Vec<Node> {
+    /// How many PDFs under `dir` the index lacks or has out of date.
+    fn unindexed(&self, dir: &Path) -> usize {
+        let Ok(read) = fs::read_dir(dir) else { return 0 };
+        read.flatten()
+            .filter(|entry| !hidden(&entry.file_name().to_string_lossy()))
+            .map(|entry| {
+                let path = entry.path();
+                match entry.metadata() {
+                    Ok(meta) if meta.is_dir() => self.unindexed(&path),
+                    Ok(meta) if is_pdf(&path) => usize::from(!self.index.get(&api_path(&path)).is_some_and(|e| e.stamp == stamp_of(&meta))),
+                    _ => 0,
+                }
+            })
+            .sum()
+    }
+
+    fn scan(&mut self, dir: &Path, seen: &mut HashSet<String>, reading: &mut Reading) -> Vec<Node> {
         let Ok(read) = fs::read_dir(dir) else { return Vec::new() };
         let mut folders = Vec::new();
         let mut files = Vec::new();
@@ -376,18 +437,21 @@ impl Store {
             let modified = meta.modified().map(millis).unwrap_or(0);
             let key = api_path(&path);
             if meta.is_dir() {
-                let children = self.scan(&path, seen);
+                let children = self.scan(&path, seen, reading);
                 let label = read_folder_info(&path).label;
                 folders.push(Node { kind: NodeKind::Folder, name, path: key, tags: Vec::new(), modified, label, missing: false, children });
             } else if is_pdf(&path) {
                 let stamp = stamp_of(&meta);
                 if !self.index.get(&key).is_some_and(|e| e.stamp == stamp) {
                     self.index.insert(key.clone(), index_entry(&path, stamp));
+                    self.dirty = true;
+                    reading.done += 1;
+                    (reading.report)(reading.done, reading.total);
                 }
                 let e = &self.index[&key];
                 let kind = if e.is_page { NodeKind::Page } else { NodeKind::Pdf };
                 let node = Node { kind, name: stem_of(&name).to_string(), path: key.clone(), tags: e.tags.clone(), modified, label: None, missing: false, children: Vec::new() };
-                seen.push(key);
+                seen.insert(key);
                 files.push(node);
             }
         }
@@ -478,6 +542,7 @@ impl Store {
         write_atomic(file, &bytes)?;
         let stamp = fs::metadata(file).map(|m| stamp_of(&m)).unwrap_or_default();
         self.index.insert(api_path(file), Entry { stamp, is_page: true, tags: page.tags.clone() });
+        self.dirty = true;
         Ok(())
     }
 
@@ -578,6 +643,7 @@ impl Store {
         for k in moved {
             let e = self.index.remove(&k).expect("key exists");
             self.index.insert(format!("{to}{}", &k[from.len()..]), e);
+            self.dirty = true;
         }
     }
 
@@ -703,6 +769,26 @@ mod tests {
 
     fn names(nodes: &[Node]) -> Vec<&str> {
         nodes.iter().map(|n| n.name.as_str()).collect()
+    }
+
+    #[test]
+    fn index_cache_spares_rereading() {
+        let dir = temp_dir("cache");
+        let cache = dir.join(".index.json");
+        let mut store = store(&[&dir]).with_cache(cache.clone());
+        let mut page = Page::new("One");
+        page.tags = vec!["kept".into()];
+        store.create_page(&api_path(&dir), &page).unwrap();
+        let mut reads = Vec::new();
+        Store::new(vec![dir.clone()], Vec::new()).tree_with_progress(&mut |done, total| reads.push((done, total)));
+        assert_eq!(reads, [(1, 1)]); // without the cache the page is read
+        store.tree();
+        let mut again = Store::new(vec![dir.clone()], Vec::new()).with_cache(cache);
+        let mut reads = 0;
+        again.tree_with_progress(&mut |_, _| reads += 1);
+        assert_eq!(reads, 0);
+        assert_eq!(again.all_tags(), ["kept"]);
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

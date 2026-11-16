@@ -24,7 +24,7 @@ impl AppState {
             log::error!("no system font found: text boxes can't be saved");
             Vec::new()
         });
-        let store = Store::new(settings.root_paths(), font);
+        let store = Store::new(settings.root_paths(), font).with_cache(crate::settings::config_dir().join("index.json"));
         Self { store: Mutex::new(store), settings: Mutex::new(settings) }
     }
 

@@ -12,7 +12,7 @@ use clipboard_rs::{Clipboard, ClipboardContext};
 use serde::Serialize;
 use coolmus_core::{Page, Paper};
 use coolmus_store::{Change, FolderLabel, Hit, Node};
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::backend::{AppState, CmdResult};
 use crate::settings::Settings;
@@ -41,15 +41,25 @@ fn tree_of(state: &AppState) -> Tree {
     Tree { tree: store.tree(), tags: store.all_tags() }
 }
 
+/// [`tree_of`], telling the UI how far it is as it reads PDFs it hasn't
+/// indexed yet (`scan-progress`: [read, to read]).
+fn tree_reporting(app: &AppHandle, state: &AppState) -> Tree {
+    let mut store = state.store();
+    let tree = store.tree_with_progress(&mut |done, total| {
+        let _ = app.emit("scan-progress", (done, total));
+    });
+    Tree { tree, tags: store.all_tags() }
+}
+
 #[tauri::command]
-pub async fn get_state(state: State<'_, AppState>) -> CmdResult<Snapshot> {
-    Ok(Snapshot { tree: tree_of(&state), settings: state.settings().clone() })
+pub async fn get_state(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Snapshot> {
+    Ok(Snapshot { tree: tree_reporting(&app, &state), settings: state.settings().clone() })
 }
 
 /// Rescans the roots (they also change outside Coolmus: Explorer, OneDrive).
 #[tauri::command]
-pub async fn get_tree(state: State<'_, AppState>) -> CmdResult<Tree> {
-    Ok(tree_of(&state))
+pub async fn get_tree(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Tree> {
+    Ok(tree_reporting(&app, &state))
 }
 
 #[tauri::command]
@@ -190,7 +200,7 @@ pub fn drop_file(state: State<AppState>, request: tauri::ipc::Request<'_>) -> Cm
 /// Lets the user add a folder to the tree. Returns the new tree, or None if
 /// cancelled.
 #[tauri::command]
-pub async fn add_root(state: State<'_, AppState>) -> CmdResult<Option<Tree>> {
+pub async fn add_root(app: AppHandle, state: State<'_, AppState>) -> CmdResult<Option<Tree>> {
     let Some(dir) = rfd::AsyncFileDialog::new().pick_folder().await else {
         return Ok(None);
     };
@@ -206,7 +216,7 @@ pub async fn add_root(state: State<'_, AppState>) -> CmdResult<Option<Tree>> {
         s.root_paths()
     };
     state.store().set_roots(roots);
-    Ok(Some(tree_of(&state)))
+    Ok(Some(tree_reporting(&app, &state)))
 }
 
 /// Removes a folder from the tree (its files stay on disk). Without any

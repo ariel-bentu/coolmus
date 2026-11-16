@@ -18,6 +18,9 @@ fn main() {
         )
         .setup(|app| {
             app.manage(backend::AppState::init());
+            if let Some(window) = app.get_webview_window("main") {
+                fit_to_screen(&window);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -50,6 +53,23 @@ fn main() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Coolmus");
+}
+
+/// Opens the window maximized, with a restored size that fits the screen: on a
+/// small laptop screen the default size would put the bottom of the window,
+/// and of its menus, off screen.
+fn fit_to_screen(window: &tauri::WebviewWindow) {
+    if let Ok(Some(monitor)) = window.current_monitor() {
+        let area = monitor.work_area().size;
+        if let Ok(size) = window.outer_size() {
+            if size.width > area.width || size.height > area.height {
+                let fit = tauri::PhysicalSize::new(size.width.min(area.width * 9 / 10), size.height.min(area.height * 9 / 10));
+                let _ = window.set_size(fit);
+                let _ = window.center();
+            }
+        }
+    }
+    let _ = window.maximize();
 }
 
 /// The app's own pages: tauri://localhost on macOS and Linux,
