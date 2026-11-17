@@ -27,6 +27,9 @@ jobs:
       - name: Test
         run: cargo test --workspace --locked
 
+      - name: Interface tests
+        run: node --test app/ui-tests/
+
       - name: Build installers and draft the release
         uses: tauri-apps/tauri-action@v0
         env:

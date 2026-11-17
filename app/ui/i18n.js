@@ -338,7 +338,7 @@ const en = {
   gradeAfter: 'graduates',
 };
 
-const dicts = { he, en };
+export const dicts = { he, en };
 let lang = 'he';
 
 export function setLanguage(l) {

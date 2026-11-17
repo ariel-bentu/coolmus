@@ -143,13 +143,16 @@ app/ui/               The interface: plain HTML/CSS/JavaScript with no build ste
 
 ## Building
 
-You need Rust 1.85 or later. On Windows, also install the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/); it comes preinstalled on Windows 10 and 11. Node.js isn't needed to build or run the app.
+You need Rust 1.85 or later. On Windows, also install the [WebView2 runtime](https://developer.microsoft.com/microsoft-edge/webview2/); it comes preinstalled on Windows 10 and 11. Node.js isn't needed to build or run the app, only for the interface's tests.
 
 ```powershell
 cargo run --release -p coolmus        # run
 cargo build --release -p coolmus      # target\release\coolmus.exe
 cargo test --workspace
+node --test app/ui-tests/             # the interface's logic (Node 22 or later)
 ```
+
+`npm test` runs both. GitHub Actions runs them, with Clippy, on every push to `main` and every pull request.
 
 To build an installer (.msi or setup.exe), install the Tauri CLI with `cargo install tauri-cli --version "^2"`, then run `cargo tauri build` inside `app/`. On a Mac, `scripts/build-windows.sh` cross-compiles the Windows installer (its header lists the one-time setup).
 
