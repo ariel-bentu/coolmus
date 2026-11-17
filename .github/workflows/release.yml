@@ -28,7 +28,7 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: Interface tests
-        run: node --test app/ui-tests/
+        run: node --test "app/ui-tests/*.test.mjs"
 
       - name: Build installers and draft the release
         uses: tauri-apps/tauri-action@v0

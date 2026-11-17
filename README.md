@@ -149,7 +149,7 @@ You need Rust 1.85 or later. On Windows, also install the [WebView2 runtime](htt
 cargo run --release -p coolmus        # run
 cargo build --release -p coolmus      # target\release\coolmus.exe
 cargo test --workspace
-node --test app/ui-tests/             # the interface's logic (Node 22 or later)
+node --test "app/ui-tests/*.test.mjs"  # the interface's logic (Node 22 or later)
 ```
 
 `npm test` runs both. GitHub Actions runs them, with Clippy, on every push to `main` and every pull request.
