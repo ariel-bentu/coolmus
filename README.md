@@ -38,6 +38,7 @@ On Windows 10 or 11: download the latest **`…_x64-setup.exe`** from [Releases]
 **Around the page**
 
 - **Always saved.** Changes are saved 3 seconds after you stop, and files are written atomically, so a crash never corrupts a page. *Clear page* asks first, and Ctrl+Z brings it back.
+- **Updates itself.** When a new version is out, Coolmus offers it; one click saves your page, installs it and restarts.
 - **Quick to start.** Coolmus remembers what it read from your PDFs, so it opens fast and rereads only files that changed; when there are many to read (the first time, or after adding a folder) it shows its progress.
 - **Where you are.** The status bar shows the page's folder path (with the folders' labels) and *page 2 of 3*; next to the title is when the page was last edited (*today 14:32*, *yesterday*, *3 days ago*, or the date), which changes only when its content does.
 - **Picks up where you left off.** Each page reopens at the zoom and position you left it at (remembered on this computer).
@@ -152,6 +153,8 @@ cargo test --workspace
 To build an installer (.msi or setup.exe), install the Tauri CLI with `cargo install tauri-cli --version "^2"`, then run `cargo tauri build` inside `app/`. On a Mac, `scripts/build-windows.sh` cross-compiles the Windows installer (its header lists the one-time setup).
 
 **Releasing a version:** `npm run release -- 0.2.0` (or `npm run release` for the version already in `app/tauri.conf.json`). It sets the version, pushes `main` and a `v0.2.0` tag; GitHub Actions then runs the tests on Windows, builds the installers and attaches them to a draft release to review and publish. `npm run release:watch` follows the build. The other shortcuts in `package.json` (`dev`, `test`, `build:windows`, `push`) are plain cargo and git commands; npm only launches them, and nothing needs installing. The GitHub login needs the `workflow` scope (`gh auth refresh -h github.com -s workflow`).
+
+**Updates:** a few seconds after it starts, Coolmus looks at the latest published release (`latest.json`) and, if it is newer, offers to install it; *Check for updates* is in Settings. Updates are signed, and the app installs only ones signed with the key whose public half is in `app/tauri.conf.json`. The private key is `~/.tauri/coolmus.key` (made once with `cargo tauri signer generate -w ~/.tauri/coolmus.key`, no password); the release build gets it from the `TAURI_SIGNING_PRIVATE_KEY` secret (`gh secret set TAURI_SIGNING_PRIVATE_KEY < ~/.tauri/coolmus.key`), and `scripts/build-windows.sh` reads the file. **Keep a backup of it:** without it, installed copies can't be updated any more. A draft release isn't offered until it is published.
 
 Release builds on Windows don't open a console window. The app also builds and runs on macOS and Linux, which is handy for development.
 

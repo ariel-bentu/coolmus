@@ -23,8 +23,16 @@
       "csp": "default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' ipc: http://ipc.localhost; worker-src 'self' blob:; font-src 'self' data: blob:"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENFMkRFODIwQjc3RDZERjQKUldUMGJYMjNJT2d0emlFaTNHenN5N3N6NEtuR20yYjVIRHFLRnNDVlBSL0dLdENld1RkYWRYenYK",
+      "endpoints": ["https://github.com/ariel-bentu/coolmus/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "publisher": "Ariel Bentolila",
     "copyright": "© 2026 Ariel Bentolila. MIT License.",
     "shortDescription": "Pen notebook where every page is a PDF",

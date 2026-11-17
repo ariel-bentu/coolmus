@@ -81,6 +81,7 @@ const state = {
   fullPage: false,
   busy: false,
   sheet: 0, // the sheet in view, from the canvas
+  version: '', // Coolmus's own
   selection: { strokes: [], texts: [], images: [] },
 };
 
@@ -956,6 +957,48 @@ function addTags(text) {
   }
 }
 
+// ---------- updates ----------
+
+/** Looks for a newer version; offers it, never installs it unasked. */
+async function checkForUpdate({ quiet = true } = {}) {
+  let update;
+  try {
+    update = await invoke('check_update');
+  } catch (e) {
+    if (!quiet) error(e);
+    return;
+  }
+  if (update) offerUpdate(update.version);
+  else if (!quiet) setStatus(t('upToDate', state.version));
+}
+
+function offerUpdate(version) {
+  const toast = el('div', { class: 'toast update' },
+    el('span', { text: t('updateAvailable', version) }),
+    el('button', { class: 'primary', text: t('updateNow'), onclick: () => { toast.remove(); installUpdate(); } }),
+    el('button', { class: 'link', text: t('later'), onclick: () => toast.remove() }),
+  );
+  $('toasts').append(toast);
+}
+
+/** Saves the page, then downloads and installs; the installer restarts Coolmus. */
+async function installUpdate() {
+  await saveNow();
+  const unlisten = await window.__TAURI__.event.listen('update-progress', ({ payload: [done, total] }) =>
+    showProgress({ text: t('downloadingUpdate'), done, total: total ?? 0 }),
+  );
+  showProgress({ text: t('downloadingUpdate') });
+  try {
+    await invoke('install_update');
+  } catch (e) {
+    error(e);
+  } finally {
+    unlisten();
+    showProgress(null);
+    setStatus('');
+  }
+}
+
 // ---------- settings ----------
 
 function saveSettings() {
@@ -993,6 +1036,12 @@ function openSettings() {
       roots,
       el('div', { class: 'row' },
         el('button', { text: t('addRoot'), onclick: async () => { if (await addRoot()) renderRoots(); } }),
+      ),
+      el('hr'),
+      el('b', { text: t('updates') }),
+      el('div', { class: 'row' },
+        el('span', { class: 'muted', text: t('version', state.version) }),
+        el('button', { text: t('checkUpdates'), onclick: () => { done(true); checkForUpdate({ quiet: false }); } }),
       ),
       el('div', { class: 'buttons' }, el('button', {
         class: 'primary',
@@ -1356,6 +1405,7 @@ async function start() {
   });
   try {
     const snap = await invoke('get_state');
+    state.version = await window.__TAURI__.app.getVersion();
     state.settings = snap.settings;
     setTree(snap);
     if (firstRun) state.tree.forEach((r) => state.openFolders.add(r.path));
@@ -1369,6 +1419,7 @@ async function start() {
     loader.classList.add('done');
     setTimeout(() => loader.remove(), 400);
   }
+  setTimeout(checkForUpdate, 5000);
 }
 
 start().catch((e) => error(e));

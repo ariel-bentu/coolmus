@@ -3,6 +3,7 @@
 mod backend;
 mod commands;
 mod settings;
+mod updates;
 
 use tauri::Manager;
 
@@ -11,6 +12,7 @@ fn main() {
     tauri::Builder::default()
         // The window only ever shows the app: a file dropped on it or a stray
         // link would otherwise replace Coolmus with that document.
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri::plugin::Builder::<tauri::Wry>::new("stay-in-app")
                 .on_navigation(|_, url| is_app_url(url))
@@ -50,6 +52,8 @@ fn main() {
             commands::save_png,
             commands::pick_onenote_files,
             commands::import_onenote,
+            updates::check_update,
+            updates::install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Coolmus");
