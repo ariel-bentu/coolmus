@@ -13,17 +13,19 @@ On Windows 10 or 11: download the latest **`…_x64-setup.exe`** from [Releases]
 **Writing and drawing**
 
 - **Hebrew first, right to left.** The interface is in Hebrew with a mirrored right-to-left layout; one click switches to English. Hebrew and English mix freely in names, tags, text boxes and search, and text fields start on the right in Hebrew.
-- **Pen input with pressure.** Windows Ink pens report pressure, and it changes the stroke width; the pen's eraser button erases. While the pen touches the screen, your palm is ignored. Every input sample is used, so fast strokes stay smooth, and *Stroke smoothing* in Settings evens out a shaky hand. Touch pans and pinch-zooms; drawing with a finger can be turned on in Settings.
-- **Pens.** Ten colors on the toolbar, and the color button opens a panel with 96 more and your last 5 custom colors. Set the width and the style: Solid, Dashed, Dotted, Highlighter (drawn under the ink, 5× wider than the pen) or Pencil.
+- **Pen input with pressure.** Windows Ink pens report pressure, and it changes the stroke width; the pen's eraser button erases. Every input sample is used, so fast strokes stay smooth and long ones keep up with the pen, and *Stroke smoothing* in Settings evens out a shaky hand and the pen's own jitter on slow lines. Touch pans and pinch-zooms; drawing with a finger can be turned on in Settings.
+- **Palm rejection.** While the pen hovers over the screen or touches it, and for a second after, a hand resting on the screen is ignored: it doesn't pan or zoom the page, scroll the folder list, or open pages and menus. A palm that landed before the pen came near has its pan undone; a touch too big for a fingertip is always a palm.
+- **Pens.** Ten colors on the toolbar, and the color button opens a panel with 96 more and your last 5 custom colors. Set the width and the style: Solid, Dashed, Dotted, Highlighter (drawn under the ink, 8× wider than its width shows, so switching between pen and highlighter keeps the number) or Pencil.
 - **An eraser that erases where it passes.** It cuts strokes at its edge and leaves the rest; passing over a text's letters removes that text box. Each drag is one undo step.
 - **Select, move, resize.** With the **Select** tool, tap an item or drag a rectangle around several, then move, resize (corner handle), duplicate or delete them. With something selected, the color, width, style and text-size controls change it.
 - **Text boxes.** With the **Text** tool, tap and type; in Hebrew the tap is the box's right edge. Each paragraph follows its own language. While you type, the toolbar shows the box's color and size, and changing them changes the text; drag the ✥ handle at the box's corner to move it. Double-tap a text box (Select tool) to edit it again.
 - **Pictures** from a file or the photo gallery, the camera, the clipboard (Ctrl+V), or dropped on the page. Large photos are scaled down so files stay small.
-- **A4 sheets, several per file.** *Add page* in the page menu adds a sheet; each sheet is a page in the PDF and in print. Ink stays on the paper and the page never grows by itself; scrolling stops at the first sheet's top and the last sheet's bottom. Blank, Lined, Grid or Dotted paper.
+- **A4 sheets, several per file.** *Add page*, under the last sheet or in the page menu, adds a sheet and glides to it with the gap between the sheets in view; each sheet is a page in the PDF and in print. Ink stays on the paper and the page never grows by itself; scrolling stops at the first sheet's top and the last sheet's bottom. Blank, Lined, Grid or Dotted paper.
 - **Write on any PDF.** Other PDFs in your folders (worksheets, scans, slides) open with their pages as the paper. What you add is a layer on top: the PDF's own content never changes, and everyone still sees the PDF with your notes in any viewer.
 
 **Pages and folders**
 
+- **New pages and folders,** with the buttons at the top of the sidebar: the line above them, *Create in: …*, names the folder they go in (click it to show that folder), and a new page or folder is scrolled to and flashed in the list.
 - **Your folders, as they are on disk.** Add one or more folders (for example `Documents\Coolmus` and a folder inside OneDrive); the sidebar shows their real subfolders and files. A folder can also show its contents directly at the top of the list, without its own row.
 - **Everything in reach.** Hovering over a folder or file shows a ⋮ button (new page, new folder, rename, delete for folders; print, open, copy, move, rename, delete for files); right-click has the full menu. Every menu has an ✕, so a pen never needs right-click or Esc.
 - **Move and copy.** Drag pages and folders between any of your folders. Copy (Ctrl+C) a page or folder and paste it in File Explorer, or copy files there and paste them here; drag files or whole folders from Explorer onto a folder to copy them in. Deleted items go to the Recycle Bin.
@@ -35,9 +37,11 @@ On Windows 10 or 11: download the latest **`…_x64-setup.exe`** from [Releases]
 
 **Around the page**
 
-- **Always saved.** Changes are saved 3 seconds after you stop, and files are written atomically, so a crash never corrupts a page.
+- **Always saved.** Changes are saved 3 seconds after you stop, and files are written atomically, so a crash never corrupts a page. *Clear page* asks first, and Ctrl+Z brings it back.
+- **Quick to start.** Coolmus remembers what it read from your PDFs, so it opens fast and rereads only files that changed; when there are many to read (the first time, or after adding a folder) it shows its progress.
 - **Where you are.** The status bar shows the page's folder path (with the folders' labels) and *page 2 of 3*; next to the title is when the page was last edited (*today 14:32*, *yesterday*, *3 days ago*, or the date), which changes only when its content does.
 - **Picks up where you left off.** Each page reopens at the zoom and position you left it at (remembered on this computer).
+- **The time** is on the toolbar, also in full page: handy in a meeting.
 - **Room to write.** Drag the sidebar's edge to resize it, hide it with Ctrl+B, or go full page (F) so the whole screen is paper.
 
 ### Shortcuts
@@ -60,7 +64,7 @@ On Windows 10 or 11: download the latest **`…_x64-setup.exe`** from [Releases]
 
 ## Where your pages live
 
-Coolmus shows the folders you add in ⚙ Settings (by default `Documents\Coolmus`), exactly as they are on disk. There is no separate index or database: you can copy, back up or reorganize them in Explorer, and Coolmus picks up the changes. A folder inside OneDrive is synced by OneDrive. Removing a folder from the list doesn't touch it on disk.
+Coolmus shows the folders you add in ⚙ Settings (by default `Documents\Coolmus`), exactly as they are on disk. Nothing is added to them, no index or database: you can copy, back up or reorganize them in Explorer, and Coolmus picks up the changes (it keeps a cache of what it read from the PDFs with its own settings, never in your folders). A folder inside OneDrive is synced by OneDrive. Removing a folder from the list doesn't touch it on disk.
 
 Each page is one file, `<page name>.pdf`, so the page's name is the file's name. It is an ordinary PDF with one PDF page per sheet, drawn as vectors: the paper, the ink (pressure-width strokes as filled outlines), pictures, and text boxes as real, selectable and searchable text with the system font embedded. Inside, as a PDF attachment named `coolmus-page.json`, it carries the page itself:
 
