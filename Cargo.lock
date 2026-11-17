@@ -575,7 +575,7 @@ dependencies = [
 
 [[package]]
 name = "coolmus"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "clipboard-rs",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "coolmus-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -607,7 +607,7 @@ dependencies = [
 
 [[package]]
 name = "coolmus-pdf"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "coolmus-core",
@@ -622,7 +622,7 @@ dependencies = [
 
 [[package]]
 name = "coolmus-render"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "coolmus-core",
  "tiny-skia",
@@ -630,7 +630,7 @@ dependencies = [
 
 [[package]]
 name = "coolmus-store"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "coolmus-core",
  "coolmus-pdf",
@@ -2984,7 +2984,7 @@ checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
 name = "onenote-import"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.22.1",
  "coolmus-core",
