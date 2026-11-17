@@ -11,7 +11,7 @@
 // applies it (which is what makes undo uniform).
 
 import * as bg from './background.js';
-import { PAPER_COLOR, bounds, cutStroke, drawPaper, effectiveAlpha, effectiveColor, hit, onSheet, sheetRects, SHEET_GAP, Smoother, strokePath, totalHeight, widthScale } from './ink.js';
+import { PAPER_COLOR, bounds, cutStroke, drawPaper, effectiveAlpha, effectiveColor, hit, linePoints, onSheet, sheetRects, SHEET_GAP, Smoother, straightLine, strokePath, totalHeight, widthScale } from './ink.js';
 import { t } from './i18n.js';
 import { isPalm, onPenNear } from './palm.js';
 
@@ -19,6 +19,9 @@ const HANDLE = 16; // resize handle size, screen px
 const ADD_SHEET_ROOM = 64; // below the last sheet, for its add button, screen px
 const PICK = 6; // pick tolerance, screen px
 const DOUBLE_TAP_MS = 450;
+const HOLD_MS = 500; // holding the pen still this long straightens the stroke
+const HOLD_SLOP = 5; // screen px the pen may wander and still count as held
+const LINE_MIN = 24; // shortest stroke that straightens, screen px
 
 const uid = () => crypto.randomUUID();
 const intersects = (a, b) => a.minX <= b.maxX && a.maxX >= b.minX && a.minY <= b.maxY && a.maxY >= b.minY;
@@ -715,7 +718,7 @@ export class SketchCanvas {
         g.bctx.fillStyle = color;
         g.frozen = 0;
       }
-      const settled = g.smoother.settled;
+      const settled = g.line ? 0 : g.smoother.settled;
       if (settled - 1 > g.frozen) {
         fill(g.bctx, g.frozen, settled);
         g.frozen = settled - 1;
@@ -995,7 +998,30 @@ export class SketchCanvas {
   }
 
   addPoint(p, g = this.gesture) {
+    if (g.line) {
+      g.stroke.points = linePoints(g.line.start, p, g.line.pressure);
+      return;
+    }
     g.smoother.push(p);
+    if (!g.hold || Math.hypot(p[0] - g.hold[0], p[1] - g.hold[1]) > HOLD_SLOP / this.zoom) {
+      g.hold = p;
+      clearTimeout(g.holdTimer);
+      g.holdTimer = setTimeout(() => this.straighten(g), HOLD_MS);
+    }
+  }
+
+  /**
+   * The pen held still at the end of a nearly straight stroke: it becomes a
+   * straight line, whose end follows the pen until it lifts.
+   */
+  straighten(g) {
+    if (this.gesture !== g) return;
+    const points = straightLine(g.stroke.points, g.hold, LINE_MIN / this.zoom);
+    if (!points) return;
+    g.line = { start: points[0], pressure: points[0][2] };
+    g.stroke.points = points;
+    g.buffer = null; // the settled part drawn so far was the freehand stroke
+    this.drawTop();
   }
 
   move(e) {
@@ -1054,6 +1080,7 @@ export class SketchCanvas {
     }
     if (g.id !== e.pointerId) return;
     this.gesture = null;
+    clearTimeout(g.holdTimer);
     this.live.style.cursor = '';
     if (cancelled) return this.cancelGesture(g);
     if (g.kind === 'draw') {
@@ -1085,6 +1112,7 @@ export class SketchCanvas {
   }
 
   cancelGesture(g = this.gesture) {
+    clearTimeout(g?.holdTimer);
     if (g?.kind === 'erase') Object.assign(this.page, g.before);
     this.gesture = null;
     this.drag = null;

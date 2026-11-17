@@ -299,6 +299,34 @@ export class Smoother {
   }
 }
 
+const LEVEL_SNAP = (3 * Math.PI) / 180; // lines this close to level or upright become exactly so
+
+/**
+ * The stroke as a straight line from its first point to `end`, if it is
+ * nearly straight already (no point strays more than a tenth of its length
+ * from that line) and at least `min` long; else null.
+ */
+export function straightLine(points, end, min) {
+  const [x0, y0] = points[0];
+  const len = Math.hypot(end[0] - x0, end[1] - y0);
+  if (len < min) return null;
+  const nx = -(end[1] - y0) / len, ny = (end[0] - x0) / len;
+  if (points.some(([x, y]) => Math.abs((x - x0) * nx + (y - y0) * ny) > len * 0.1)) return null;
+  const pressure = points.reduce((sum, q) => sum + q[2], 0) / points.length;
+  return linePoints(points[0], end, pressure);
+}
+
+/** Points of an even line from `start` to `end` with one pressure, snapped level or upright when close. */
+export function linePoints([x0, y0], [x1, y1], pressure) {
+  const len = Math.hypot(x1 - x0, y1 - y0);
+  const a = Math.atan2(y1 - y0, x1 - x0);
+  const right = Math.round(a / (Math.PI / 2)) * (Math.PI / 2);
+  if (Math.abs(a - right) < LEVEL_SNAP) [x1, y1] = [x0 + len * Math.cos(right), y0 + len * Math.sin(right)];
+  // Many points, not two, so dashes, the eraser and cutting work as on any stroke.
+  const n = Math.max(1, Math.ceil(len / 4));
+  return Array.from({ length: n + 1 }, (_, i) => [x0 + ((x1 - x0) * i) / n, y0 + ((y1 - y0) * i) / n, pressure]);
+}
+
 /** Draws the paper pattern of every visible sheet (view in page coordinates). */
 export function drawPaper(ctx, page, view, zoom) {
   if (page.background) return; // the PDF underneath is the paper
